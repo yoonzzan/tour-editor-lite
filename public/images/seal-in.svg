@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="140" height="140" viewBox="0 0 140 140" role="img" aria-label="인감도장 인">
+  <circle cx="70" cy="70" r="56" fill="none" stroke="#d71920" stroke-width="3.5" opacity="0.78"/>
+  <circle cx="70" cy="70" r="49" fill="none" stroke="#d71920" stroke-width="1.25" opacity="0.56"/>
+  <text
+    x="70"
+    y="79"
+    fill="#d71920"
+    fill-opacity="0.76"
+    font-family="Noto Sans KR, Apple SD Gothic Neo, Malgun Gothic, sans-serif"
+    font-size="40"
+    font-weight="500"
+    text-anchor="middle"
+  >인</text>
+</svg>

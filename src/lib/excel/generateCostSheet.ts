@@ -40,11 +40,11 @@ const CATEGORY_ORDER: readonly CostGroup[] = [
 
 type RowAlignment = "left" | "center" | "right";
 
-const STAMP_GUIDE_PATH = path.join(
+const SEAL_STAMP_IMAGE_PATH = path.join(
   process.cwd(),
   "public",
   "images",
-  "stamp-guide.png"
+  "seal-in.png"
 );
 
 interface CellRange {
@@ -526,13 +526,13 @@ function addTotals(sheet: ExcelJS.Worksheet, data: QuoteData): void {
 }
 
 function addStampGuide(sheet: ExcelJS.Worksheet, startLineRow: number): void {
-  if (!existsSync(STAMP_GUIDE_PATH)) {
+  if (!existsSync(SEAL_STAMP_IMAGE_PATH)) {
     return;
   }
 
   try {
     const stampId = sheet.workbook.addImage({
-      filename: STAMP_GUIDE_PATH,
+      filename: SEAL_STAMP_IMAGE_PATH,
       extension: "png",
     });
     sheet.addImage(stampId, {

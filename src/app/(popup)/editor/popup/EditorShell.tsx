@@ -265,6 +265,7 @@ export function EditorShell({ role }: Props) {
       {/* 미리보기 모달 (T-410) */}
       {showPreview && (
         <PreviewModal
+          initialTab={activeTab}
           onClose={() => setShowPreview(false)}
         />
       )}

@@ -17,15 +17,17 @@ import {
 
 const PREVIEW_DOCUMENT_CLASS = "w-full space-y-6 px-6 py-6 text-[12.5px]";
 const PREVIEW_WIDE_TABLE_CLASS = "min-w-[1080px] w-full table-fixed text-[12.5px] leading-[18px]";
+const SEAL_STAMP_SRC = "/images/seal-in.svg";
 
 type PreviewTab = "itinerary" | "quote";
 
 interface Props {
   onClose: () => void;
+  initialTab?: PreviewTab;
 }
 
-export function PreviewModal({ onClose }: Props) {
-  const [activeTab, setActiveTab] = useState<PreviewTab>("itinerary");
+export function PreviewModal({ onClose, initialTab = "itinerary" }: Props) {
+  const [activeTab, setActiveTab] = useState<PreviewTab>(initialTab);
   const { itinerary, quote } = useEditorStore();
 
   function handleDownload(type: "itinerary" | "cost") {
@@ -67,11 +69,15 @@ export function PreviewModal({ onClose }: Props) {
     };
 
     iframe.addEventListener("load", () => {
+      if (iframe.contentWindow?.location.href === "about:blank") {
+        return;
+      }
+
       const text = iframe.contentDocument?.body?.innerText.trim();
       if (text) {
         window.alert(`엑셀 다운로드에 실패했습니다.\n${text}`);
+        window.setTimeout(cleanup, 1000);
       }
-      window.setTimeout(cleanup, 1000);
     });
 
     document.body.appendChild(iframe);
@@ -735,7 +741,9 @@ function QuotePreview({ quote }: { quote: QuoteData | null }) {
                         <td className="px-3 py-1.5 text-left text-foreground">
                           <div className="whitespace-pre-wrap">{item.description || ""}</div>
                         </td>
-                        <td className="whitespace-nowrap px-3 py-1.5 text-right">{item.quantity || 0}</td>
+                        <td className="whitespace-nowrap px-3 py-1.5 text-right">
+                          {(item.quantity || 0).toLocaleString()}
+                        </td>
                         <td className="whitespace-nowrap px-3 py-1.5 text-right">
                           {getExchangeRateForItem(exchangeRates, item).code}{" "}
                           {item.unitPrice ? item.unitPrice.toLocaleString() : 0}
@@ -801,10 +809,19 @@ function QuotePreview({ quote }: { quote: QuoteData | null }) {
         이 견적은 {formatDateKor(validUntil)} 까지만 유효합니다
       </p>
 
-      <div className="pt-4 text-left text-[12.5px] leading-[18px] text-foreground">
-        <p>(주)하나투어</p>
-        <p>서울시 종로구 인사동 5길 41</p>
-        <p>TEL: 1577-1233 | FAX: 02-1234-5678</p>
+      <div className="overflow-x-auto">
+        <div className="relative min-w-[1080px] pt-4 text-left text-[12.5px] leading-[18px] text-foreground">
+          <p>(주)하나투어</p>
+          <p>서울시 종로구 인사동 5길 41</p>
+          <p>TEL: 1577-1233 | FAX: 02-1234-5678</p>
+          <Image
+            src={SEAL_STAMP_SRC}
+            alt="인감도장 인"
+            width={52}
+            height={52}
+            className="absolute left-[845px] top-4 h-[52px] w-[52px]"
+          />
+        </div>
       </div>
     </div>
   );
