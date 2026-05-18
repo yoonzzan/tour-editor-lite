@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { useEditorStore } from "@/hooks/useEditorStore";
 import type { ItineraryData, QuoteData } from "@/types";
 
@@ -74,6 +74,10 @@ function buildQuote(): QuoteData {
 }
 
 describe("useEditorStore", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("does not auto-generate quote items when loading an itinerary", () => {
     const store = useEditorStore.getState();
     store.setItinerary(buildItinerary());
@@ -84,5 +88,16 @@ describe("useEditorStore", () => {
     const quote = useEditorStore.getState().quote;
     expect(quote?.items).toEqual([]);
     expect(quote?.summary.total).toBe(0);
+  });
+
+  it("uses today's Korea date as the default quote written date", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-17T15:30:00.000Z"));
+
+    useEditorStore.getState().loadFromProduct(buildItinerary());
+
+    const quote = useEditorStore.getState().quote;
+    expect(quote?.header.writtenAt).toBe("2026-05-18");
+    expect(quote?.header.validUntil).toBe("2026-05-18");
   });
 });

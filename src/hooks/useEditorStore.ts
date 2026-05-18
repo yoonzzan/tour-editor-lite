@@ -34,7 +34,7 @@ export const useEditorStore = create<EditorState>((set) => ({
   loadFromProduct: (itinerary) =>
     set(() => {
       const normalized = enforceAccommodationPolicy(itinerary);
-      const writtenAt = normalized.header.writtenAt || todayInKorea();
+      const writtenAt = todayInKorea();
       return {
         itinerary: normalized,
         quote: recalculateQuoteData({
