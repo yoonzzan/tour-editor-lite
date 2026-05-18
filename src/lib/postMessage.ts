@@ -2,8 +2,7 @@
 // 부모 창(하나투어 허브)으로 메시지를 전달한다.
 
 export type EditorPostMessage =
-  | { type: "SAVE_COMPLETE"; quoteNo: string; versionNo: string }
-  | { type: "EDITOR_CLOSED" };
+  { type: "EDITOR_CLOSED" };
 
 /**
  * window.opener 로 메시지를 전달한다.

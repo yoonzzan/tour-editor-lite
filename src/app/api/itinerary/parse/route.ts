@@ -1,16 +1,17 @@
 import * as ExcelJS from "exceljs";
 import JSZip from "jszip";
+import type * as CfbType from "cfb";
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import { getApiToken } from "@/lib/auth";
 import { config } from "@/lib/config";
+import { requireConverterAccess } from "@/lib/converter/access";
 import { parseItineraryWithDiagnostics, type ItineraryParseResult } from "@/lib/itinerary/aiParser";
+import { parseItineraryText } from "@/lib/itinerary/importParser";
 import { spreadsheetRowsToText } from "@/lib/itinerary/spreadsheetText";
 
 export const runtime = "nodejs";
 
 const UNSUPPORTED_XLS_MESSAGE = "구형 Excel(.xls)은 보안상 지원하지 않습니다. Excel에서 .xlsx로 저장한 뒤 다시 업로드해 주세요.";
-const UNSUPPORTED_HWP_MESSAGE = "구형 한글(.hwp)은 아직 지원하지 않습니다. .hwpx 또는 PDF로 저장한 뒤 업로드해 주세요.";
 const PDF_OCR_MAX_PAGES = 6;
 const PDF_OCR_IMAGE_WIDTH = 1600;
 const PDF_TEXT_MIN_CHARS = 80;
@@ -145,7 +146,11 @@ function worksheetToText(worksheet: ExcelJS.Worksheet): string {
 async function spreadsheetToText(file: File): Promise<string> {
   const workbook = new ExcelJS.Workbook();
   const arrayBuffer = await file.arrayBuffer();
-  await workbook.xlsx.load(arrayBuffer);
+  try {
+    await workbook.xlsx.load(arrayBuffer);
+  } catch {
+    throw new Error("올바른 .xlsx 파일이 아닙니다. 파일이 손상되었거나 구형 .xls 형식일 수 있습니다.");
+  }
   const worksheets = selectWorksheets(workbook);
   return worksheets
     .map((worksheet) => [`[sheet:${worksheet.name}]`, worksheetToText(worksheet)].filter(Boolean).join("\n"))
@@ -281,8 +286,40 @@ function hwpxXmlToText(xml: string): string {
     .join("\n");
 }
 
+async function docxToText(file: File): Promise<string> {
+  let zip: JSZip;
+  try {
+    zip = await JSZip.loadAsync(await file.arrayBuffer());
+  } catch {
+    throw new Error("올바른 .docx 파일이 아닙니다. 파일이 손상되었거나 구형 .doc 형식일 수 있습니다.");
+  }
+  const documentXml = zip.file("word/document.xml");
+  if (!documentXml) throw new Error(".docx 파일 내부에서 문서 내용을 찾을 수 없습니다.");
+  const xml = await documentXml.async("string");
+
+  // OOXML: <w:p>는 단락, <w:t>는 실제 텍스트
+  const paragraphs = Array.from(xml.matchAll(/<w:p\b[^>]*>([\s\S]*?)<\/w:p>/giu));
+  const lines = paragraphs
+    .map((match) => {
+      const inner = match[1] ?? "";
+      const texts = Array.from(
+        inner.matchAll(/<w:t\b[^>]*>([\s\S]*?)<\/w:t>/giu),
+        (m) => decodeXmlEntities(m[1] ?? ""),
+      );
+      return texts.join("").trim();
+    })
+    .filter(Boolean);
+
+  return lines.join("\n");
+}
+
 async function hwpxToText(file: File): Promise<string> {
-  const zip = await JSZip.loadAsync(await file.arrayBuffer());
+  let zip: JSZip;
+  try {
+    zip = await JSZip.loadAsync(await file.arrayBuffer());
+  } catch {
+    throw new Error("올바른 .hwpx 파일이 아닙니다. 파일이 손상되었거나 구형 .hwp 형식일 수 있습니다.");
+  }
   const xmlFiles = Object.values(zip.files)
     .filter((entry) => !entry.dir && entry.name.toLowerCase().endsWith(".xml"))
     .sort((left, right) => left.name.localeCompare(right.name));
@@ -291,14 +328,88 @@ async function hwpxToText(file: File): Promise<string> {
   return sections.filter(Boolean).join("\n");
 }
 
-async function extractRawText(formData: FormData): Promise<{ rawText: string; title?: string }> {
+function parseHwpSection(buf: Buffer): string {
+  const lines: string[] = [];
+  let offset = 0;
+  while (offset + 4 <= buf.length) {
+    const header = buf.readUInt32LE(offset);
+    offset += 4;
+    const tagId = header & 0x3ff;
+    let size = (header >> 20) & 0xfff;
+    if (size === 0xfff) {
+      if (offset + 4 > buf.length) break;
+      size = buf.readUInt32LE(offset);
+      offset += 4;
+    }
+    if (offset + size > buf.length) break;
+    if (tagId === 67) {
+      // PARA_TEXT(HWPTAG_BEGIN+51=0x43): UTF-16LE 텍스트, 제어 코드(< 0x20) 제외
+      let text = "";
+      for (let i = 0; i + 1 < size; i += 2) {
+        const code = buf.readUInt16LE(offset + i);
+        if (code === 0x0d || code === 0x2029) {
+          if (text.trim()) lines.push(text.trim());
+          text = "";
+        } else if (code >= 0x20) {
+          text += String.fromCharCode(code);
+        }
+      }
+      if (text.trim()) lines.push(text.trim());
+    }
+    offset += size;
+  }
+  return lines.join("\n");
+}
+
+async function hwpToText(file: File): Promise<string> {
+  const { inflateRawSync } = await import("zlib");
+  const cfbMod = await import("cfb");
+  // CJS 모듈 interop: webpack은 named exports를 직접 노출하거나 default 아래에 둠
+  const cfbLib = ((cfbMod as unknown as { default?: typeof CfbType }).default ?? cfbMod) as typeof CfbType;
+
+  const buf = Buffer.from(await file.arrayBuffer());
+  let wb: CfbType.CFB$Container;
+  try {
+    wb = cfbLib.read(buf, { type: "buffer" });
+  } catch {
+    throw new Error("HWP 파일을 열 수 없습니다. 파일이 손상되었거나 HWP 3.x 이하 구형 형식일 수 있습니다.");
+  }
+
+  const headerEntry = cfbLib.find(wb, "FileHeader");
+  if (!headerEntry?.content) throw new Error("HWP 파일 헤더를 읽을 수 없습니다.");
+  const headerBuf = Buffer.from(headerEntry.content);
+  if (headerBuf.length < 40) throw new Error("HWP 파일 헤더가 올바르지 않습니다.");
+  const flags = headerBuf.readUInt32LE(36);
+  const isCompressed = (flags & 0x01) !== 0;
+  const isEncrypted = (flags & 0x02) !== 0;
+  if (isEncrypted) throw new Error("암호화된 HWP 파일은 지원하지 않습니다. 암호를 제거한 뒤 업로드해 주세요.");
+
+  const sectionEntries: CfbType.CFB$Entry[] = wb.FileIndex
+    .filter((e) => e.type === 2 && /^Section\d+$/i.test(e.name))
+    .sort((a, b) => {
+      const na = parseInt(a.name.replace(/Section/i, ""), 10);
+      const nb = parseInt(b.name.replace(/Section/i, ""), 10);
+      return na - nb;
+    });
+
+  const texts: string[] = [];
+  for (const entry of sectionEntries) {
+    let data = Buffer.from(entry.content);
+    if (isCompressed) data = inflateRawSync(data);
+    const sectionText = parseHwpSection(data);
+    if (sectionText) texts.push(sectionText);
+  }
+  return texts.join("\n");
+}
+
+async function extractRawText(formData: FormData): Promise<{ rawText: string; title?: string; isTextInput: boolean }> {
   const textInput = formData.get("text");
   const titleInput = formData.get("title");
   const fileInput = formData.get("file");
 
   const title = typeof titleInput === "string" ? titleInput.trim() : undefined;
   if (typeof textInput === "string" && textInput.trim()) {
-    return { rawText: textInput, title };
+    return { rawText: textInput, title, isTextInput: true };
   }
 
   if (!(fileInput instanceof File)) {
@@ -309,25 +420,49 @@ async function extractRawText(formData: FormData): Promise<{ rawText: string; ti
   const fileTitle = fileInput.name.replace(/\.[^.]+$/u, "");
 
   if (name.endsWith(".xls") && !name.endsWith(".xlsx")) throw new Error(UNSUPPORTED_XLS_MESSAGE);
-  if (name.endsWith(".hwp") && !name.endsWith(".hwpx")) throw new Error(UNSUPPORTED_HWP_MESSAGE);
+  if (name.endsWith(".hwp") && !name.endsWith(".hwpx")) {
+    const rawText = await hwpToText(fileInput);
+    return { rawText, title: title ?? fileTitle, isTextInput: false };
+  }
 
   if (name.endsWith(".xlsx")) {
     const rawText = await spreadsheetToText(fileInput);
-    return { rawText, title: title ?? fileTitle };
+    return { rawText, title: title ?? fileTitle, isTextInput: false };
   }
 
   if (name.endsWith(".pdf")) {
     const rawText = await pdfToText(fileInput);
-    return { rawText, title: title ?? fileTitle };
+    return { rawText, title: title ?? fileTitle, isTextInput: false };
   }
 
   if (name.endsWith(".hwpx")) {
     const rawText = await hwpxToText(fileInput);
-    return { rawText, title: title ?? fileTitle };
+    return { rawText, title: title ?? fileTitle, isTextInput: false };
+  }
+
+  if (name.endsWith(".docx")) {
+    const rawText = await docxToText(fileInput);
+    return { rawText, title: title ?? fileTitle, isTextInput: false };
   }
 
   const rawText = await fileInput.text();
-  return { rawText, title: title ?? fileTitle };
+  return { rawText, title: title ?? fileTitle, isTextInput: false };
+}
+
+function tryFastParse(rawText: string): ItineraryParseResult | null {
+  try {
+    const itinerary = parseItineraryText(rawText);
+    const hasContent =
+      itinerary.days.length > 0 &&
+      itinerary.days.some((d) => d.items.length > 0);
+    if (!hasContent) return null;
+    return {
+      itinerary,
+      diagnostics: { source: "fast-text", aiAttempted: false },
+    };
+  } catch {
+    return null;
+  }
 }
 
 function isDebugRequest(req: NextRequest): boolean {
@@ -337,6 +472,15 @@ function isDebugRequest(req: NextRequest): boolean {
     };
   };
   return requestWithUrl.nextUrl?.searchParams?.get("debug") === "1";
+}
+
+function isProgressRequest(req: NextRequest): boolean {
+  const requestWithUrl = req as NextRequest & {
+    nextUrl?: {
+      searchParams?: URLSearchParams;
+    };
+  };
+  return requestWithUrl.nextUrl?.searchParams?.get("progress") === "1";
 }
 
 function toPublicParseResult(result: ItineraryParseResult, includeDebug: boolean): ItineraryParseResult {
@@ -349,15 +493,102 @@ function toPublicParseResult(result: ItineraryParseResult, includeDebug: boolean
   };
 }
 
+type ParseProgressStage = "received" | "extracting" | "analyzing" | "completed" | "failed";
+
+interface ParseProgressEvent {
+  stage: ParseProgressStage;
+  message: string;
+  result?: ItineraryParseResult;
+  error?: string;
+}
+
+function progressMessage(stage: ParseProgressStage): string {
+  switch (stage) {
+    case "received":
+      return "요청을 확인하고 있습니다.";
+    case "extracting":
+      return "파일/입력 내용을 읽고 있습니다.";
+    case "analyzing":
+      return "일정 구조를 파악하고 있습니다.";
+    case "completed":
+      return "일정표로 정리하고 있습니다.";
+    case "failed":
+      return "일정을 불러오지 못했습니다.";
+  }
+}
+
+function encodeProgressEvent(event: ParseProgressEvent): Uint8Array {
+  return new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`);
+}
+
+function streamParseProgress(req: NextRequest): Response {
+  const includeDebug = isDebugRequest(req);
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const send = (event: ParseProgressEvent) => {
+        controller.enqueue(encodeProgressEvent(event));
+      };
+
+      try {
+        send({ stage: "received", message: progressMessage("received") });
+        const formData = await req.formData();
+        send({ stage: "extracting", message: progressMessage("extracting") });
+        const { rawText, title, isTextInput } = await extractRawText(formData);
+        if (isTextInput) {
+          const fast = tryFastParse(rawText);
+          if (fast) {
+            send({ stage: "completed", message: progressMessage("completed"), result: toPublicParseResult(fast, includeDebug) });
+            return;
+          }
+        }
+        send({ stage: "analyzing", message: progressMessage("analyzing") });
+        const result = await parseItineraryWithDiagnostics({ rawText, title });
+        send({
+          stage: "completed",
+          message: progressMessage("completed"),
+          result: toPublicParseResult(result, includeDebug),
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "파싱 중 오류가 발생했습니다.";
+        send({
+          stage: "failed",
+          message: progressMessage("failed"),
+          error: message,
+        });
+      } finally {
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+    },
+  });
+}
+
 export async function POST(req: NextRequest) {
-  const token = await getApiToken(req);
-  if (!token?.sub) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const accessError = requireConverterAccess(req);
+  if (accessError) return accessError;
+
+  if (isProgressRequest(req)) {
+    return streamParseProgress(req);
   }
 
   try {
     const formData = await req.formData();
-    const { rawText, title } = await extractRawText(formData);
+    const { rawText, title, isTextInput } = await extractRawText(formData);
+    if (isTextInput) {
+      const fast = tryFastParse(rawText);
+      if (fast) {
+        return NextResponse.json(toPublicParseResult(fast, isDebugRequest(req)), {
+          headers: { "x-itinerary-parser-source": "fast-text", "x-itinerary-parser-score": "" },
+        });
+      }
+    }
     const result = await parseItineraryWithDiagnostics({ rawText, title });
     const publicResult = toPublicParseResult(result, isDebugRequest(req));
     return NextResponse.json(publicResult, {

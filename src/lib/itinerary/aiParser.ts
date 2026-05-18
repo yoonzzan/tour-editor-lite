@@ -125,6 +125,7 @@ const aiOutputSchema = z.object({
           child: optionalNumeric,
           infant: optionalNumeric,
           escort: optionalNumeric,
+          foc: optionalNumeric,
         }),
       singleCharge: optionalNumeric,
       fare: coerceOptionalObject({
@@ -162,6 +163,7 @@ interface ParseWithAiInput {
 
 export type ItineraryParserSource =
   | "ai"
+  | "fast-text"
   | "fallback-tabular"
   | "fallback-no-key"
   | "fallback-ai-error"
@@ -1070,6 +1072,10 @@ const SCHEDULE_HEADER_TOKENS = new Set([
   "항목추가",
   "개요",
   "일정표",
+  "일자",
+  "날짜",
+  "일정",
+  "세부일정",
 ]);
 
 function normalizeHeaderToken(value: string): string {
@@ -1079,7 +1085,7 @@ function normalizeHeaderToken(value: string): string {
 }
 
 function isStructuredHeaderLine(text: string): boolean {
-  const cols = splitScheduleColumns(text);
+  const cols = splitScheduleColumnsWithTabs(text).filter(Boolean);
   if (cols.length < 3) return false;
   const headerMatched = cols.filter((token) => SCHEDULE_HEADER_TOKENS.has(normalizeHeaderToken(token))).length;
   if (headerMatched === 0) return false;
@@ -1997,6 +2003,7 @@ function extractMetaFromRaw(
   let child: number | undefined;
   let infant: number | undefined;
   let escort: number | undefined;
+  let foc: number | undefined;
 
   let departure = "";
   let arrival = "";
@@ -2076,6 +2083,7 @@ function extractMetaFromRaw(
       escort = escortTokens.reduce((sum, value) => sum + value, 0);
     }
     escort = escort ?? parseCountByToken(line, "인솔자");
+    foc = foc ?? parseCountByToken(line, "FOC");
 
     if (!departure) {
       const found = extractLabeledValue(metaLine, ["항공 출발", "항공출발", "출국편", "출발편", "출발 항공편", "항공편", "항공편 정보", "항공정보"]);
@@ -2195,7 +2203,8 @@ function extractMetaFromRaw(
     adult !== undefined ||
     child !== undefined ||
     infant !== undefined ||
-    escort !== undefined
+    escort !== undefined ||
+    foc !== undefined
   ) {
     meta.overview = {
       recipient: recipient || "",
@@ -2213,6 +2222,7 @@ function extractMetaFromRaw(
         child: child ?? 0,
         infant: infant ?? 0,
         escort: escort ?? 0,
+        foc: foc ?? 0,
       },
       fare: {
         adultPerPerson,
@@ -2282,6 +2292,7 @@ function mergeItineraryWithMeta(base: ItineraryData, meta: ItineraryMeta): Itine
         child: base.overview.passengers.child || meta.overview?.passengers?.child || 0,
         infant: base.overview.passengers.infant || meta.overview?.passengers?.infant || 0,
         escort: base.overview.passengers.escort || meta.overview?.passengers?.escort || 0,
+        foc: base.overview.passengers.foc || meta.overview?.passengers?.foc || 0,
       },
       fare: {
         adultPerPerson: base.overview.fare.adultPerPerson || meta.overview?.fare?.adultPerPerson || 0,
@@ -2335,6 +2346,7 @@ function mergeNonScheduleData(base: ItineraryData, source: ItineraryData): Itine
         child: source.overview.passengers.child || base.overview.passengers.child,
         infant: source.overview.passengers.infant || base.overview.passengers.infant,
         escort: source.overview.passengers.escort || base.overview.passengers.escort,
+        foc: source.overview.passengers.foc || base.overview.passengers.foc,
       },
       fare: {
         adultPerPerson: source.overview.fare.adultPerPerson || base.overview.fare.adultPerPerson,
@@ -2751,10 +2763,15 @@ function applyAuthoritativeTabularItems(primary: ItineraryData, fallback: Itiner
 
 function selectScheduleLines(lines: string[]): string[] {
   const truncateAtSummary = (source: string[]): string[] => {
-    const summaryIndex = source.findIndex((line) => isSummaryTrailerLine(line));
+    const summaryIndex = source.findIndex((line) => isSummaryTrailerLine(line) || isScheduleTerminalLine(line));
     return summaryIndex >= 0 ? source.slice(0, summaryIndex) : source;
   };
+  const structuredHeaderIndex = findScheduleTableHeaderIndex(lines);
+  if (structuredHeaderIndex >= 0) {
+    return truncateAtSummary(lines.slice(structuredHeaderIndex + 1));
+  }
   const markerIndex = lines.findIndex((line) =>
+    !/^\[sheet:/iu.test(cleanText(line)) &&
     /(?:^|[\s|])(?:\d+\.\s*)?\[?\s*(?:간단일정|간략\s*일정|상세일정|일자별\s*일정|일정표)\s*\]?\s*[:：]?(?:$|[\s|])/u
       .test(cleanText(line))
   );
@@ -2770,6 +2787,24 @@ function selectScheduleLines(lines: string[]): string[] {
   }
 
   return truncateAtSummary(lines).filter((line) => !isMetaOnlyScheduleText(line));
+}
+
+function findScheduleTableHeaderIndex(lines: string[]): number {
+  return lines.findIndex((line, index) => {
+    if (!isStructuredHeaderLine(line)) return false;
+    return lines
+      .slice(index + 1, index + 31)
+      .some((candidate) => extractDayNoFromScheduleLine(candidate) !== undefined || parseSimpleDayScheduleLine(candidate) !== undefined);
+  });
+}
+
+function isScheduleTerminalLine(line: string): boolean {
+  const text = cleanText(line);
+  const compact = text.replace(/\s+/gu, "");
+  if (!compact) return false;
+  if (/상기일정은.*(?:변경|사정)/u.test(compact)) return true;
+  if (/^\(?주\)?하나투어$/u.test(compact)) return true;
+  return false;
 }
 
 function parseSimpleDayScheduleLine(line: string): { dayNo: number; body: string } | undefined {
@@ -2883,7 +2918,9 @@ function parseFallbackFromRaw(rawText: string, title?: string): ItineraryData {
   const lines = allLines.filter((line) => !isNoiseLine(line));
   if (lines.length === 0) return base;
 
-  const scheduleLines = selectScheduleLines(lines).filter((line) => !isMetaOnlyScheduleText(line));
+  const structuredHeaderIndex = findScheduleTableHeaderIndex(allLines);
+  const scheduleLineSource = structuredHeaderIndex >= 0 ? allLines : lines;
+  const scheduleLines = selectScheduleLines(scheduleLineSource).filter((line) => !isMetaOnlyScheduleText(line));
   const grouped = new Map<number, ScheduleItem[]>();
   const dayDateByNo = new Map<number, string>();
   const seenByDay = new Map<number, Set<string>>();
@@ -2928,7 +2965,10 @@ function parseFallbackFromRaw(rawText: string, title?: string): ItineraryData {
     return /^(?:20\d{2}[./-]\d{1,2}[./-]\d{1,2}\.?|(?:0?[1-9]|1[0-2])[./](?:0?[1-9]|[12]\d|3[01])\.?)$/u.test(compact);
   };
   let inSummaryBlock = false;
-  const headerMap = detectScheduleHeaderFromLines(allLines);
+  const structuredHeaderLine = structuredHeaderIndex >= 0 ? allLines[structuredHeaderIndex] : undefined;
+  const headerMap = structuredHeaderLine
+    ? detectScheduleHeader(splitScheduleColumnsWithTabs(structuredHeaderLine))
+    : detectScheduleHeaderFromLines(allLines);
 
   const parseHeaderAlignedLine = (line: string): boolean => {
     if (!headerMap) return false;
@@ -3485,6 +3525,7 @@ function normalizeAiResult(raw: unknown, title?: string): ItineraryData {
         child: safeNumber(value.overview?.passengers?.child),
         infant: safeNumber(value.overview?.passengers?.infant),
         escort: safeNumber(value.overview?.passengers?.escort),
+        foc: safeNumber(value.overview?.passengers?.foc),
       },
       singleCharge:
         value.overview?.singleCharge === undefined

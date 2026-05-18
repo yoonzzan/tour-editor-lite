@@ -1,14 +1,15 @@
 "use client";
 
 // T-306: DayBlock 컴포넌트 (일차 헤더 + 항목 목록)
-// T-307: 항목 추가 버튼 → 유형 선택 드롭다운
+// T-307: 항목 추가 버튼 → 관광 항목 즉시 추가
 // T-311: @dnd-kit/core 드래그앤드롭 (같은 일차 내)
 
-import { useState, type ReactNode } from "react";
+import { type ReactNode } from "react";
 import {
   DndContext,
   closestCenter,
   PointerSensor,
+  KeyboardSensor,
   useSensor,
   useSensors,
   type DragEndEvent,
@@ -17,18 +18,11 @@ import {
   SortableContext,
   verticalListSortingStrategy,
   useSortable,
+  sortableKeyboardCoordinates,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import type { DaySchedule, ScheduleItem, ScheduleItemType } from "@/types";
 import { ScheduleItemForm } from "./ScheduleItemForm";
-
-const ITEM_TYPES: { type: ScheduleItemType; label: string }[] = [
-  { type: "TRANSFER", label: "이동" },
-  { type: "SIGHTSEEING", label: "관광" },
-  { type: "MEAL", label: "식사" },
-  { type: "ACCOMMODATION", label: "숙박" },
-  { type: "OTHER", label: "기타" },
-];
 
 interface Props {
   day: DaySchedule;
@@ -49,10 +43,9 @@ export function DayBlock({
   onReorder,
   dayDragHandle,
 }: Props) {
-  const [showTypeMenu, setShowTypeMenu] = useState(false);
-
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
 
   function handleDragEnd(event: DragEndEvent) {
@@ -80,15 +73,16 @@ export function DayBlock({
     .map((it) => it.id);
 
   return (
-    <div className="rounded-lg border border-border bg-card" data-testid={`day-block-${day.dayNo}`}>
+    <div className="hub-section" data-testid={`day-block-${day.dayNo}`}>
       {/* 일차 헤더 */}
-      <div className="flex items-center gap-3 border-b border-border px-4 py-2.5">
+      <div className="hub-section-head">
+        <div className="flex min-w-0 items-center gap-3">
         {dayDragHandle && (
           <div className="cursor-grab text-muted-foreground hover:text-foreground">
             {dayDragHandle}
           </div>
         )}
-        <span className="min-w-[4rem] text-sm font-semibold text-foreground">
+        <span className="min-w-[4rem] text-[14px] font-bold text-foreground">
           {day.dayNo}일차
         </span>
         <input
@@ -96,11 +90,12 @@ export function DayBlock({
           aria-label={`${day.dayNo}일차 날짜`}
           value={day.date}
           onChange={(e) => onUpdateDay({ ...day, date: e.target.value })}
-          className="rounded border border-input bg-transparent px-2 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+          className="hub-input w-32"
         />
-        <span className="ml-auto text-xs text-muted-foreground">
+        <span className="text-xs text-muted-foreground">
           {day.items.length}개 항목
         </span>
+        </div>
         <button
           type="button"
           disabled={day.items.length === 0}
@@ -109,21 +104,21 @@ export function DayBlock({
             if (!window.confirm(`${day.dayNo}일차의 모든 항목을 삭제할까요?`)) return;
             onClearDay();
           }}
-          className="rounded-md border border-border px-2 py-1 text-xs text-muted-foreground hover:border-destructive hover:text-destructive disabled:cursor-not-allowed disabled:opacity-40"
+          className="hub-btn hub-btn-custom disabled:cursor-not-allowed"
         >
           내용 전체삭제
         </button>
       </div>
 
       {/* 항목 목록 */}
-      <div className="flex flex-col gap-2 p-3">
-        <div className="hidden md:grid md:grid-cols-12 md:items-center md:gap-2 md:px-7">
-          <span className="md:col-span-2 text-center text-xs text-muted-foreground">항목구분</span>
-          <span className="md:col-span-1 text-center text-xs text-muted-foreground">지역</span>
-          <span className="md:col-span-1 text-center text-xs text-muted-foreground">교통편</span>
-          <span className="md:col-span-1 text-center text-xs text-muted-foreground">시간</span>
-          <span className="md:col-span-3 text-center text-xs text-muted-foreground">내용</span>
-          <span className="md:col-span-4 text-center text-xs text-muted-foreground">상세</span>
+      <div className="flex flex-col p-2">
+        <div className="hidden border border-grid-border bg-grid-header md:grid md:grid-cols-12 md:items-center md:gap-1 md:px-7 md:py-1">
+          <span className="md:col-span-2 text-center text-xs font-bold text-grid-header-foreground">항목구분</span>
+          <span className="md:col-span-1 text-center text-xs font-bold text-grid-header-foreground">지역</span>
+          <span className="md:col-span-1 text-center text-xs font-bold text-grid-header-foreground">교통편</span>
+          <span className="md:col-span-1 text-center text-xs font-bold text-grid-header-foreground">시간</span>
+          <span className="md:col-span-3 text-center text-xs font-bold text-grid-header-foreground">내용</span>
+          <span className="md:col-span-4 text-center text-xs font-bold text-grid-header-foreground">상세</span>
         </div>
 
         <DndContext
@@ -148,38 +143,22 @@ export function DayBlock({
         </DndContext>
 
         {day.items.length === 0 && (
-          <p className="py-4 text-center text-xs text-muted-foreground">
+          <p className="border-x border-b border-grid-border py-4 text-center text-xs text-muted-foreground">
             항목이 없습니다. 아래 버튼으로 추가하세요.
           </p>
         )}
       </div>
 
       {/* 항목 추가 (T-307) */}
-      <div className="relative border-t border-border px-3 py-2.5">
+      <div className="border-t border-border bg-muted/30 px-3 py-2">
         <button
-          onClick={() => setShowTypeMenu((v) => !v)}
-          className="flex items-center gap-1.5 rounded-md border border-dashed border-border px-3 py-1.5 text-xs text-muted-foreground hover:border-primary hover:text-primary"
+          type="button"
+          onClick={() => onAddItem("SIGHTSEEING")}
+          className="hub-btn hub-btn-custom"
         >
           <span>+</span>
           <span>항목 추가</span>
         </button>
-
-        {showTypeMenu && (
-          <div className="absolute left-3 top-12 z-10 flex flex-col rounded-md border border-border bg-background shadow-none">
-            {ITEM_TYPES.map(({ type, label }) => (
-              <button
-                key={type}
-                className="px-4 py-2 text-left text-sm hover:bg-muted"
-                onClick={() => {
-                  onAddItem(type);
-                  setShowTypeMenu(false);
-                }}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        )}
       </div>
     </div>
   );
@@ -222,7 +201,7 @@ function SortableItem({
   ) : null;
 
   return (
-    <div ref={setNodeRef} style={style} className="flex flex-col gap-1">
+    <div ref={setNodeRef} style={style} className="flex flex-col">
       <ScheduleItemForm
         item={item}
         onChange={onChange}

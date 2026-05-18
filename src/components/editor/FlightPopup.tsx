@@ -4,6 +4,7 @@
 // T-604: 조회 결과 테이블 (왕복: 출국+귀국 조합, 편도: 인디비 단일편)
 
 import { useState } from "react";
+import { withAccessCodeHeaders } from "@/lib/converter/clientAccess";
 import type {
   FlightDirection,
   FlightFareOption,
@@ -104,7 +105,9 @@ export function FlightPopup({ onClose, onSelect }: Props) {
   }
 
   async function loadSchedules(params: URLSearchParams) {
-    const res = await fetch(`/api/flights?${params.toString()}`);
+    const res = await fetch(`/api/flights?${params.toString()}`, {
+      headers: withAccessCodeHeaders(),
+    });
     if (!res.ok) {
       const body = (await res.json()) as { error?: string };
       throw new Error(body.error ?? "항공 조회에 실패했습니다.");
@@ -190,22 +193,22 @@ export function FlightPopup({ onClose, onSelect }: Props) {
       <div
         role="dialog"
         aria-modal="true"
-        className="z-modal flex max-h-[90vh] w-[1120px] flex-col overflow-hidden rounded-md border border-border bg-card shadow-none"
+        className="hub-dialog z-modal flex max-h-[90vh] w-[1120px] flex-col overflow-hidden"
       >
-        <div className="flex h-8 shrink-0 items-center justify-between bg-chrome-sidebar px-3 text-chrome-sidebar-foreground">
-          <h2 className="text-xs font-semibold">항공 조회</h2>
+        <div className="hub-dialog-head">
+          <h2 className="text-[13px] font-bold leading-5">항공 조회</h2>
           <button
             type="button"
             onClick={onClose}
             aria-label="닫기"
-            className="rounded-erp p-1 text-chrome-sidebar-foreground hover:bg-chrome-sidebar-hover"
+            className="hub-btn-text px-2 text-chrome-sidebar-foreground hover:bg-chrome-sidebar-hover"
           >
             ✕
           </button>
         </div>
 
         <div className="shrink-0 border-b border-border px-5 py-4">
-          <div className="mb-4 inline-flex overflow-hidden rounded-md border border-input bg-background">
+          <div className="hub-tabs mb-4 inline-flex overflow-hidden">
             {(["ROUND_TRIP", "ONE_WAY"] as const).map((tripType) => (
               <button
                 key={tripType}
@@ -213,8 +216,8 @@ export function FlightPopup({ onClose, onSelect }: Props) {
                 onClick={() => handleModeChange(tripType)}
                 className={
                   mode === tripType
-                    ? "bg-primary px-4 py-1.5 text-xs font-medium text-primary-foreground"
-                    : "px-4 py-1.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+                    ? "hub-tab hub-tab-active"
+                    : "hub-tab"
                 }
               >
                 {getTripTypeLabel(tripType)}
@@ -229,11 +232,11 @@ export function FlightPopup({ onClose, onSelect }: Props) {
           )}
 
           <div className="mt-3 flex items-center justify-between gap-3">
-            <p className="text-xs text-muted-foreground">{selectionMessage ?? helperText}</p>
+            <p className="text-[12.5px] text-muted-foreground">{selectionMessage ?? helperText}</p>
             <button
               onClick={handleSearch}
               disabled={isLoading}
-              className="rounded-md bg-primary px-4 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+              className="hub-btn hub-btn-primary disabled:opacity-50"
             >
               {isLoading ? "조회 중..." : "조회"}
             </button>
@@ -242,17 +245,17 @@ export function FlightPopup({ onClose, onSelect }: Props) {
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4" style={{ minHeight: "280px" }}>
           {error && (
-            <p role="alert" className="text-xs text-destructive">
+            <p role="alert" className="text-[12.5px] text-destructive">
               {error}
             </p>
           )}
 
           {schedules === null && isLoading && (
-            <p className="text-xs text-muted-foreground">조회 중...</p>
+            <p className="text-[12.5px] text-muted-foreground">조회 중...</p>
           )}
 
           {schedules !== null && schedules.length === 0 && (
-            <p className="text-xs text-muted-foreground">조회된 항공편이 없습니다.</p>
+            <p className="text-[12.5px] text-muted-foreground">조회된 항공편이 없습니다.</p>
           )}
 
           {schedules !== null && schedules.length > 0 && (
@@ -270,7 +273,7 @@ export function FlightPopup({ onClose, onSelect }: Props) {
           <button
             type="button"
             onClick={onClose}
-            className="h-7 rounded-erp border border-border px-4 text-xs font-medium text-foreground hover:bg-muted"
+            className="hub-btn hub-btn-custom"
           >
             닫기
           </button>
@@ -294,7 +297,7 @@ function RoundTripSearchForm({
         <AirportField label="출국 출발공항" value={form.departureAirport} onChange={(value) => onChange("departureAirport", value)} />
         <AirportField label="출국 도착공항" value={form.arrivalAirport} onChange={(value) => onChange("arrivalAirport", value)} />
       </div>
-      <span className="flex h-[31px] items-center self-end text-xs text-muted-foreground">/</span>
+      <span className="flex h-[31px] items-center self-end text-[12.5px] text-muted-foreground">/</span>
       <div className="flex items-end gap-2">
         <DateField label="귀국일" value={form.returnDate} onChange={(value) => onChange("returnDate", value)} />
         <AirportField label="귀국 출발공항" value={form.returnDepartureAirport} onChange={(value) => onChange("returnDepartureAirport", value)} />
@@ -314,10 +317,10 @@ function OneWaySearchForm({
   return (
     <div className="flex flex-wrap items-end gap-3">
       <div className="flex flex-col gap-1">
-        <span className="text-xs text-muted-foreground">적용 대상</span>
-        <div className="flex h-[31px] items-center gap-3 rounded-md border border-input bg-background px-3">
+        <span className="text-[12.5px] text-muted-foreground">적용 대상</span>
+        <div className="flex h-[31px] items-center gap-3 border border-input bg-white px-3">
           {(["DEPARTURE", "RETURN"] as const).map((direction) => (
-            <label key={direction} className="flex cursor-pointer items-center gap-1.5 text-xs text-foreground">
+            <label key={direction} className="flex cursor-pointer items-center gap-1.5 text-[12.5px] text-foreground">
               <input
                 type="radio"
                 name="one-way-direction"
@@ -332,7 +335,7 @@ function OneWaySearchForm({
       </div>
       <DateField label={form.direction === "DEPARTURE" ? "가는 날" : "오는 날"} value={form.flightDate} onChange={(value) => onChange("flightDate", value)} />
       <AirportField label="출발공항" value={form.departureAirport} onChange={(value) => onChange("departureAirport", value)} />
-      <span className="mb-1 text-xs text-muted-foreground">→</span>
+      <span className="mb-1 text-[12.5px] text-muted-foreground">→</span>
       <AirportField label="도착공항" value={form.arrivalAirport} onChange={(value) => onChange("arrivalAirport", value)} />
     </div>
   );
@@ -349,12 +352,12 @@ function DateField({
 }) {
   return (
     <div className="flex flex-col gap-1">
-      <label className="text-xs text-muted-foreground">{label}</label>
+      <label className="text-[12.5px] text-muted-foreground">{label}</label>
       <input
         type="date"
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="rounded border border-input bg-background px-2 py-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+        className="hub-input"
       />
     </div>
   );
@@ -371,13 +374,13 @@ function AirportField({
 }) {
   return (
     <div className="flex flex-col gap-1">
-      <label className="text-xs text-muted-foreground">{label}</label>
+      <label className="text-[12.5px] text-muted-foreground">{label}</label>
       <input
         type="text"
         value={value}
         onChange={(event) => onChange(event.target.value.toUpperCase())}
         placeholder="ICN"
-        className="w-28 rounded border border-input bg-background px-2 py-1.5 text-xs uppercase text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+        className="hub-input w-28 uppercase"
       />
     </div>
   );
@@ -391,9 +394,9 @@ function RoundTripResults({
   onSelect: (schedule: FlightFareOption) => void;
 }) {
   return (
-    <table className="w-full border-collapse text-xs">
+    <table className="hub-grid">
       <thead>
-        <tr className="border-b border-border bg-muted text-left text-muted-foreground">
+        <tr>
           <th className="px-3 py-2 text-center font-medium">항공사</th>
           <th className="px-3 py-2 text-center font-medium">구분</th>
           <th className="px-3 py-2 text-center font-medium">출국 편명</th>
@@ -444,9 +447,9 @@ function OneWayResults({
   onSelect: (schedule: FlightFareOption) => void;
 }) {
   return (
-    <table className="w-full border-collapse text-xs">
+    <table className="hub-grid">
       <thead>
-        <tr className="border-b border-border bg-muted text-left text-muted-foreground">
+        <tr>
           <th className="px-3 py-2 text-center font-medium">항공사</th>
           <th className="px-3 py-2 text-center font-medium">구분</th>
           <th className="px-3 py-2 text-center font-medium">편명</th>
@@ -485,8 +488,8 @@ function FareTypeBadge({ fareType }: { fareType: FlightFareOption["fareType"] })
     <span
       className={
         fareType === "GROUP"
-          ? "inline-flex rounded border border-primary/30 bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary"
-          : "inline-flex rounded border border-border bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground"
+          ? "inline-flex rounded border border-primary/30 bg-primary/10 px-2 py-0.5 text-[11.5px] font-medium text-primary"
+          : "inline-flex rounded border border-border bg-muted px-2 py-0.5 text-[11.5px] font-medium text-muted-foreground"
       }
     >
       {getFareTypeLabel(fareType)}
@@ -509,7 +512,7 @@ function SelectButton({ onClick }: { onClick: () => void }) {
   return (
     <button
       onClick={onClick}
-      className="rounded border border-primary px-2 py-0.5 text-xs text-primary hover:bg-primary hover:text-primary-foreground"
+      className="hub-btn hub-btn-primary h-7 px-2"
     >
       선택
     </button>

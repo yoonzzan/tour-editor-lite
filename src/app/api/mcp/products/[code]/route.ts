@@ -4,8 +4,8 @@ import type { NextRequest } from "next/server";
 import products from "@/mocks/products.json";
 import type { ItineraryData } from "@/types";
 import { randomUUID } from "node:crypto";
-import { getApiToken } from "@/lib/auth";
 import { config } from "@/lib/config";
+import { requireConverterAccess } from "@/lib/converter/access";
 import {
   fetchSaleProductFromMcp,
   McpNotFoundError,
@@ -59,16 +59,8 @@ function withProductSource(
 }
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ code: string }> }) {
-  const token = await getApiToken(req);
-  const devTokenHeader = req.headers.get("x-dev-token")?.trim();
-  const hasDevToken =
-    config.mcp.allowDevToken &&
-    config.mcp.devToken.length > 0 &&
-    ((devTokenHeader?.replace(/^Bearer\s+/i, "") ?? "") === config.mcp.devToken);
-
-  if (!token?.sub && !hasDevToken) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const accessError = requireConverterAccess(req);
+  if (accessError) return accessError;
 
   const { code } = await params;
   const normalizedCode = code.trim().toUpperCase();

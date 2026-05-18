@@ -4,10 +4,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { NextRequest } from "next/server";
 import type { ItineraryData, MealSlot } from "@/types";
 
-vi.mock("@/lib/auth", () => ({
-  getApiToken: vi.fn(async () => ({ sub: "test-user" })),
-}));
-
 const FIXTURE_DIR = path.resolve(process.cwd(), "tests/fixtures/itinerary-golden");
 const QUALITY_SCORE_THRESHOLD = 70;
 const KNOWN_LOW_SCORE_BASELINES = [
@@ -15,6 +11,28 @@ const KNOWN_LOW_SCORE_BASELINES = [
 ];
 const FIELD_COVERAGE_BASELINES = [
   { marker: "쿠말겐3박", minDayCount: 4, minMealCount: 7, minAccommodationCount: 1 },
+];
+const INLINE_EXPECTATIONS: Array<{ marker: string; expected: GoldenExpected }> = [
+  {
+    marker: "싱가폴 3박 24년 10월 15일",
+    expected: {
+      requiredContents: ["인천공항 3층 출국장 도착 후 출국수속", "싱가폴 이색 문화 체험", "머라이언공원"],
+      requiredMeals: [
+        { slot: "breakfast", valueIncludes: "호텔식" },
+        { slot: "lunch", valueIncludes: "송파 바쿠테" },
+        { slot: "dinner", valueIncludes: "북창동 순두부" },
+      ],
+      requiredHotels: ["모멘튜스 또는 동급", "마리나 베이 샌즈 또는 동급"],
+      forbiddenContents: [
+        "□포함",
+        "노쇼핑 노옵션",
+        "기타 개인경비",
+        "실시간 최저가 요금",
+        "상기 일정은 항공 및 현지 사정",
+        "㈜ 하나투어",
+      ],
+    },
+  },
 ];
 const SUPPORTED_EXTENSIONS = new Set([".xlsx", ".txt"]);
 const UNSUPPORTED_EXTENSIONS = new Set([".xls"]);
@@ -67,7 +85,7 @@ interface ParsePayload {
 
 function listFixtureCases(extensions: Set<string>): GoldenCase[] {
   return readdirSync(FIXTURE_DIR)
-    .filter((name) => extensions.has(path.extname(name).toLowerCase()))
+    .filter((name) => !name.startsWith("~$") && extensions.has(path.extname(name).toLowerCase()))
     .sort((left, right) => left.localeCompare(right))
     .map((name) => ({
       name,
@@ -98,8 +116,21 @@ function expectedPathFor(testCase: GoldenCase): string {
 
 function loadExpected(testCase: GoldenCase): GoldenExpected | null {
   const expectedPath = expectedPathFor(testCase);
-  if (!existsSync(expectedPath)) return null;
-  return JSON.parse(readFileSync(expectedPath, "utf8")) as GoldenExpected;
+  const fileExpected = existsSync(expectedPath)
+    ? JSON.parse(readFileSync(expectedPath, "utf8")) as GoldenExpected
+    : null;
+  const normalizedName = testCase.name.normalize("NFC");
+  const inlineExpected = INLINE_EXPECTATIONS.find((entry) => normalizedName.includes(entry.marker))?.expected ?? null;
+  if (!fileExpected) return inlineExpected;
+  if (!inlineExpected) return fileExpected;
+  return {
+    ...fileExpected,
+    ...inlineExpected,
+    requiredContents: [...(fileExpected.requiredContents ?? []), ...(inlineExpected.requiredContents ?? [])],
+    requiredMeals: [...(fileExpected.requiredMeals ?? []), ...(inlineExpected.requiredMeals ?? [])],
+    requiredHotels: [...(fileExpected.requiredHotels ?? []), ...(inlineExpected.requiredHotels ?? [])],
+    forbiddenContents: [...(fileExpected.forbiddenContents ?? []), ...(inlineExpected.forbiddenContents ?? [])],
+  };
 }
 
 function baselineMinQualityScore(testCase: GoldenCase, expected: GoldenExpected | null): number {
@@ -127,8 +158,6 @@ function includesText(values: string[], expected: string): boolean {
 }
 
 async function parseFixture(testCase: GoldenCase): Promise<{ status: number; payload: ParsePayload }> {
-  process.env.NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET || "test-secret";
-  process.env.DATABASE_URL = process.env.DATABASE_URL || "file:./test.db";
   process.env.OPENAI_API_KEY = "";
   vi.resetModules();
 
@@ -138,6 +167,7 @@ async function parseFixture(testCase: GoldenCase): Promise<{ status: number; pay
   formData.append("title", testCase.name.replace(/\.[^.]+$/u, ""));
 
   const request = {
+    headers: new Headers({ "x-access-code": "test-code" }),
     formData: async () => formData,
     nextUrl: new URL("http://localhost/api/itinerary/parse?debug=1"),
   } as unknown as NextRequest;
@@ -150,8 +180,7 @@ async function parseFixture(testCase: GoldenCase): Promise<{ status: number; pay
 }
 
 beforeEach(() => {
-  process.env.NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET || "test-secret";
-  process.env.DATABASE_URL = process.env.DATABASE_URL || "file:./test.db";
+  process.env.ACCESS_CODE = "test-code";
   process.env.OPENAI_API_KEY = "";
 });
 

@@ -1,11 +1,11 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as ExcelJS from "exceljs";
 import JSZip from "jszip";
 import type { NextRequest } from "next/server";
 
-vi.mock("@/lib/auth", () => ({
-  getApiToken: vi.fn(async () => ({ sub: "test-user" })),
-}));
+beforeEach(() => {
+  process.env.ACCESS_CODE = "test-code";
+});
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -142,10 +142,24 @@ async function makeXlsxWithPrimaryScheduleAndNoisySampleSheets(): Promise<File> 
   });
 }
 
+async function readProgressEvents(response: Response): Promise<Array<{ stage?: string; message?: string; result?: unknown; error?: string }>> {
+  const text = await response.text();
+  return text
+    .split("\n\n")
+    .map((chunk) => chunk.trim())
+    .filter((chunk) => chunk.length > 0)
+    .map((chunk) => {
+      const data = chunk
+        .split("\n")
+        .filter((line) => line.startsWith("data:"))
+        .map((line) => line.replace(/^data:\s?/u, ""))
+        .join("\n");
+      return JSON.parse(data) as { stage?: string; message?: string; result?: unknown; error?: string };
+    });
+}
+
 describe("/api/itinerary/parse", () => {
-  it("returns public diagnostics by default and candidate scores only in debug mode", async () => {
-    process.env.NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET || "test-secret";
-    process.env.DATABASE_URL = process.env.DATABASE_URL || "file:./test.db";
+  it("fast-parses well-structured text without AI and returns fast-text source", async () => {
     process.env.OPENAI_API_KEY = "";
     vi.resetModules();
 
@@ -153,40 +167,55 @@ describe("/api/itinerary/parse", () => {
     const formData = new FormData();
     formData.append("text", "1일차 2026-06-02\n- 이동 | 인천공항 출발\n- 식사 | 석식: 현지식\n- 숙박 | 테스트 호텔");
 
-    const defaultRequest = {
+    const request = {
+      headers: new Headers({ "x-access-code": "test-code" }),
       formData: async () => formData,
     } as unknown as NextRequest;
 
-    const defaultResponse = await POST(defaultRequest);
-    const defaultPayload = (await defaultResponse.json()) as {
+    const response = await POST(request);
+    const payload = (await response.json()) as {
+      itinerary?: { days?: unknown[] };
       diagnostics?: {
+        source?: string;
         qualityScore?: number;
         candidateScores?: unknown[];
       };
     };
 
-    expect(defaultResponse.headers.get("x-itinerary-parser-score")).not.toBeNull();
-    expect(defaultPayload.diagnostics?.qualityScore).toBeGreaterThanOrEqual(0);
-    expect(defaultPayload.diagnostics?.candidateScores).toBeUndefined();
+    expect(response.headers.get("x-itinerary-parser-source")).toBe("fast-text");
+    expect(payload.diagnostics?.source).toBe("fast-text");
+    expect(payload.diagnostics?.qualityScore).toBeUndefined();
+    expect(payload.diagnostics?.candidateScores).toBeUndefined();
+    expect(payload.itinerary?.days?.length).toBeGreaterThan(0);
+  });
 
-    const debugRequest = {
+  it("streams real parse progress events in progress mode", async () => {
+    process.env.OPENAI_API_KEY = "";
+    vi.resetModules();
+
+    const { POST } = await import("./route");
+    const formData = new FormData();
+    formData.append("text", "1일차 2026-06-02\n- 이동 | 인천공항 출발\n- 식사 | 석식: 현지식\n- 숙박 | 테스트 호텔");
+
+    const request = {
+      headers: new Headers({ "x-access-code": "test-code" }),
       formData: async () => formData,
-      nextUrl: new URL("http://localhost/api/itinerary/parse?debug=1"),
+      nextUrl: new URL("http://localhost/api/itinerary/parse?progress=1"),
     } as unknown as NextRequest;
 
-    const debugResponse = await POST(debugRequest);
-    const debugPayload = (await debugResponse.json()) as {
-      diagnostics?: {
-        candidateScores?: Array<{ candidate?: string }>;
-      };
-    };
+    const response = await POST(request);
+    const events = await readProgressEvents(response);
 
-    expect(debugPayload.diagnostics?.candidateScores?.[0]?.candidate).toBe("deterministic-narrative");
+    expect(response.headers.get("content-type")).toContain("text/event-stream");
+    expect(events.map((event) => event.stage)).toEqual([
+      "received",
+      "extracting",
+      "completed",
+    ]);
+    expect(events[2]?.result).toBeDefined();
   });
 
   it("rejects legacy .xls files with a clear conversion message", async () => {
-    process.env.NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET || "test-secret";
-    process.env.DATABASE_URL = process.env.DATABASE_URL || "file:./test.db";
     process.env.OPENAI_API_KEY = "";
     vi.resetModules();
 
@@ -200,6 +229,7 @@ describe("/api/itinerary/parse", () => {
     );
 
     const request = {
+      headers: new Headers({ "x-access-code": "test-code" }),
       formData: async () => formData,
     } as unknown as NextRequest;
 
@@ -222,8 +252,6 @@ describe("/api/itinerary/parse", () => {
   });
 
   it("extracts text from .hwpx files before parsing the itinerary", async () => {
-    process.env.NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET || "test-secret";
-    process.env.DATABASE_URL = process.env.DATABASE_URL || "file:./test.db";
     process.env.OPENAI_API_KEY = "";
     vi.resetModules();
 
@@ -232,6 +260,7 @@ describe("/api/itinerary/parse", () => {
     formData.append("file", await makeHwpxFile());
 
     const request = {
+      headers: new Headers({ "x-access-code": "test-code" }),
       formData: async () => formData,
     } as unknown as NextRequest;
 
@@ -257,8 +286,6 @@ describe("/api/itinerary/parse", () => {
   });
 
   it("keeps displayed Excel time cells as HH:mm values", async () => {
-    process.env.NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET || "test-secret";
-    process.env.DATABASE_URL = process.env.DATABASE_URL || "file:./test.db";
     process.env.OPENAI_API_KEY = "";
     vi.resetModules();
 
@@ -267,6 +294,7 @@ describe("/api/itinerary/parse", () => {
     formData.append("file", await makeXlsxWithDisplayedTimes());
 
     const request = {
+      headers: new Headers({ "x-access-code": "test-code" }),
       formData: async () => formData,
     } as unknown as NextRequest;
 
@@ -295,8 +323,6 @@ describe("/api/itinerary/parse", () => {
   });
 
   it("keeps numeric Excel time cells as displayed HH:mm values", async () => {
-    process.env.NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET || "test-secret";
-    process.env.DATABASE_URL = process.env.DATABASE_URL || "file:./test.db";
     process.env.OPENAI_API_KEY = "";
     vi.resetModules();
 
@@ -305,6 +331,7 @@ describe("/api/itinerary/parse", () => {
     formData.append("file", await makeXlsxWithNumericTimeCell());
 
     const request = {
+      headers: new Headers({ "x-access-code": "test-code" }),
       formData: async () => formData,
     } as unknown as NextRequest;
 
@@ -334,8 +361,6 @@ describe("/api/itinerary/parse", () => {
   });
 
   it("handles sparse Excel rows without failing on blank cells", async () => {
-    process.env.NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET || "test-secret";
-    process.env.DATABASE_URL = process.env.DATABASE_URL || "file:./test.db";
     process.env.OPENAI_API_KEY = "";
     vi.resetModules();
 
@@ -344,6 +369,7 @@ describe("/api/itinerary/parse", () => {
     formData.append("file", await makeXlsxWithSparseRows());
 
     const request = {
+      headers: new Headers({ "x-access-code": "test-code" }),
       formData: async () => formData,
     } as unknown as NextRequest;
 
@@ -368,8 +394,6 @@ describe("/api/itinerary/parse", () => {
   });
 
   it("keeps numeric day rows and date cells out of itinerary content", async () => {
-    process.env.NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET || "test-secret";
-    process.env.DATABASE_URL = process.env.DATABASE_URL || "file:./test.db";
     process.env.OPENAI_API_KEY = "";
     vi.resetModules();
 
@@ -378,6 +402,7 @@ describe("/api/itinerary/parse", () => {
     formData.append("file", await makeXlsxWithDateCells());
 
     const request = {
+      headers: new Headers({ "x-access-code": "test-code" }),
       formData: async () => formData,
     } as unknown as NextRequest;
 
@@ -410,8 +435,6 @@ describe("/api/itinerary/parse", () => {
   });
 
   it("reads schedule data from later sheets and propagates merged day cells", async () => {
-    process.env.NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET || "test-secret";
-    process.env.DATABASE_URL = process.env.DATABASE_URL || "file:./test.db";
     process.env.OPENAI_API_KEY = "";
     vi.resetModules();
 
@@ -420,6 +443,7 @@ describe("/api/itinerary/parse", () => {
     formData.append("file", await makeXlsxWithScheduleOnLaterSheetAndMergedDay());
 
     const request = {
+      headers: new Headers({ "x-access-code": "test-code" }),
       formData: async () => formData,
     } as unknown as NextRequest;
 
@@ -451,8 +475,6 @@ describe("/api/itinerary/parse", () => {
   });
 
   it("uses the primary schedule sheet instead of quote or sample itinerary sheets", async () => {
-    process.env.NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET || "test-secret";
-    process.env.DATABASE_URL = process.env.DATABASE_URL || "file:./test.db";
     process.env.OPENAI_API_KEY = "";
     vi.resetModules();
 
@@ -462,6 +484,7 @@ describe("/api/itinerary/parse", () => {
     formData.append("title", "미동부 테스트");
 
     const request = {
+      headers: new Headers({ "x-access-code": "test-code" }),
       formData: async () => formData,
       nextUrl: new URL("http://localhost/api/itinerary/parse?debug=1"),
     } as unknown as NextRequest;
@@ -489,8 +512,6 @@ describe("/api/itinerary/parse", () => {
   });
 
   it("uses OCR fallback when uploaded PDF has no extractable text", async () => {
-    process.env.NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET || "test-secret";
-    process.env.DATABASE_URL = process.env.DATABASE_URL || "file:./test.db";
     process.env.OPENAI_API_KEY = "test-key";
     vi.resetModules();
 
@@ -571,6 +592,7 @@ describe("/api/itinerary/parse", () => {
     formData.append("file", new File(["fake pdf"], "scan.pdf", { type: "application/pdf" }));
 
     const request = {
+      headers: new Headers({ "x-access-code": "test-code" }),
       formData: async () => formData,
     } as unknown as NextRequest;
 

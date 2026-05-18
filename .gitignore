@@ -22,11 +22,50 @@ CLAUDE.local.md
 .tmp-*
 dev.db
 
+# 원본 tour-editor 전용 산출물/문서/도구 — lite 배포에서는 제외
+DESIGN.md
+docs/*
+!docs/mcp-response-field-mapping.md
+!docs/EXCEL_FORMAT_SPEC.md
+e2e/
+presentation/
+prisma/
+check-cost.js
+check-cost.ts
+playwright.config.ts
+tsconfig.seed.json
+
+# 원본 로그인/DB/버전 기반 서버 기능 — lite 배포에서는 제외
+src/app/login/
+src/app/api/auth/
+src/app/api/editor/
+src/app/api/quotes/
+src/app/(popup)/layout.tsx
+src/app/(popup)/editor/popup/page.tsx
+src/app/(popup)/editor/popup/RoleMismatch.tsx
+src/hooks/useAutoSave.ts
+src/hooks/usePopupInit.ts
+src/lib/auth.ts
+src/lib/auth/
+src/lib/db.ts
+src/lib/version/
+
+# 원본 버전 저장/비교 UI — lite 배포에서는 제외
+src/components/editor/DiffViewer.tsx
+src/components/editor/SaveModal.tsx
+src/components/editor/VersionComparisonPanel.tsx
+src/components/editor/VersionHistory.tsx
+
 # 테스트 산출물
 coverage/
 playwright-report/
 test-results/
 .playwright/
+
+# 원본 견적 문서 샘플은 민감정보 포함 가능성이 있어 명시적으로 검토 후 force-add
+tests/fixtures/itinerary-golden/*.hwp
+tests/fixtures/itinerary-golden/*.doc
+tests/fixtures/itinerary-golden/*.docx
 
 # IDE
 .vscode/
@@ -36,9 +75,6 @@ test-results/
 # OS
 .DS_Store
 Thumbs.db
-
-# Prisma
-prisma/migrations/
 
 # 기타
 *.tsbuildinfo

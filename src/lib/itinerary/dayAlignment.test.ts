@@ -9,7 +9,7 @@ function baseItinerary(days: ItineraryData["days"]): ItineraryData {
       recipient: "",
       cities: "",
       travelPeriod: { start: "2026-06-02", end: "2026-06-06" },
-      passengers: { adult: 0, child: 0, infant: 0, escort: 0 },
+      passengers: { adult: 0, child: 0, infant: 0, escort: 0, foc: 0 },
       fare: { adultPerPerson: 0, childPerPerson: 0, infantPerPerson: 0, total: 0, totalWithCard: 0 },
     },
     basics: {

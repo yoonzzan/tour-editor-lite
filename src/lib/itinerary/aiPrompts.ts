@@ -58,7 +58,7 @@ export const FEW_SHOT_ASSISTANT = JSON.stringify({
     recipient: "",
     cities: "방콕",
     travelPeriod: { start: "2026-01-01", end: "2026-01-03" },
-    passengers: { adult: 0, child: 0, infant: 0, escort: 0 },
+    passengers: { adult: 0, child: 0, infant: 0, escort: 0, foc: 0 },
     fare: {
       adultPerPerson: 0,
       childPerPerson: 0,
@@ -159,7 +159,7 @@ export function buildAnalysisUserPrompt(
     "출발일: YYYY-MM-DD 또는 빈 값",
     "기간: YYYY-MM-DD ~ YYYY-MM-DD 또는 빈 값",
     "도시: ...",
-    "인원: 성인 n / 아동 n / 유아 n / 인솔자 n",
+    "인원: 성인 n / 아동 n / 유아 n / 인솔자 n / FOC n",
     "요금: 성인 n / 아동 n / 유아 n / 총액 n",
     "항공: 출발편 ... / 귀국편 ...",
     "호텔: 호텔명 ... / 등급 ... / 객실 ...",

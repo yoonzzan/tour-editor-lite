@@ -31,6 +31,16 @@
     --grid-header-foreground: 205 14% 30%;
     --grid-border: 206 14% 82%;
     --pk-tab: 183 85% 41%;
+    --hub-top: 228 20% 10%;
+    --hub-chrome: 227 11% 29%;
+    --hub-chrome-strong: 203 28% 26%;
+    --hub-label: 210 33% 95%;
+    --hub-field: 0 0% 100%;
+    --hub-line: 214 8% 89%;
+    --hub-secondary: 200 15% 51%;
+    --hub-secondary-border: 198 17% 46%;
+    --hub-pink: 322 88% 97%;
+    --hub-cyan-soft: 184 88% 94%;
     /* 일정 항목구분 칩 (ScheduleItemForm) — 시맨틱 HSL, Tailwind arbitrary와 함께 사용 */
     --schedule-transfer-bg: 214 100% 97%;
     --schedule-transfer-fg: 224 64% 33%;
@@ -47,6 +57,7 @@
     --radius-md: 5px;
     --radius: var(--radius-md);
     --radius-erp-sm: 2px;
+    --hub-control-height: 31px;
   }
 
   .dark {
@@ -82,6 +93,249 @@
   }
 }
 
+@layer components {
+  .hub-app {
+    min-height: 100vh;
+    background: hsl(210 33% 97%);
+    color: hsl(var(--foreground));
+  }
+
+  .hub-topbar {
+    height: 34px;
+    border-bottom: 1px solid hsl(var(--hub-top));
+    background: hsl(var(--hub-top));
+    color: hsl(0 0% 100%);
+  }
+
+  .hub-titlebar {
+    min-height: 46px;
+    border-bottom: 1px solid hsl(var(--hub-line));
+    background: hsl(0 0% 100%);
+  }
+
+  .hub-screen-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: hsl(var(--foreground));
+  }
+
+  .hub-breadcrumb {
+    font-size: 10px;
+    color: hsl(var(--muted-foreground));
+  }
+
+  .hub-workspace {
+    background: hsl(210 33% 97%);
+  }
+
+  .hub-section {
+    overflow: hidden;
+    border: 1px solid hsl(var(--hub-line));
+    border-radius: 3px;
+    background: hsl(0 0% 100%);
+  }
+
+  .hub-section-head {
+    display: flex;
+    min-height: 30px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    border-bottom: 1px solid hsl(var(--hub-line));
+    background: hsl(var(--hub-label));
+    padding: 0 10px;
+  }
+
+  .hub-section-title {
+    font-size: 12.5px;
+    font-weight: 700;
+    color: hsl(var(--foreground));
+  }
+
+  .hub-panel-body {
+    padding: 10px;
+  }
+
+  .hub-field {
+    display: grid;
+    grid-template-columns: 120px minmax(0, 1fr);
+    min-height: 31px;
+    border-top: 1px solid hsl(var(--hub-line));
+    border-left: 1px solid hsl(var(--hub-line));
+  }
+
+  .hub-field-label {
+    display: flex;
+    align-items: center;
+    border-right: 1px solid hsl(var(--hub-line));
+    border-bottom: 1px solid hsl(var(--hub-line));
+    background: hsl(var(--hub-label));
+    padding: 0 8px;
+    font-size: 12.5px;
+    font-weight: 700;
+    color: hsl(202 14% 31%);
+  }
+
+  .hub-field-control {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    border-right: 1px solid hsl(var(--hub-line));
+    border-bottom: 1px solid hsl(var(--hub-line));
+    background: hsl(var(--hub-field));
+    padding: 4px;
+  }
+
+  .hub-input,
+  .hub-select,
+  .hub-textarea {
+    width: 100%;
+    min-width: 0;
+    border: 1px solid hsl(217 13% 65%);
+    border-radius: 2px;
+    background: hsl(0 0% 100%);
+    color: hsl(var(--foreground));
+    font-size: 12.5px;
+    line-height: 19px;
+  }
+
+  .hub-input,
+  .hub-select {
+    height: var(--hub-control-height);
+    padding: 5px 6px;
+  }
+
+  .hub-textarea {
+    min-height: var(--hub-control-height);
+    padding: 5px 6px;
+    resize: none;
+  }
+
+  .hub-input:focus,
+  .hub-select:focus,
+  .hub-textarea:focus {
+    border-color: hsl(var(--primary));
+    outline: none;
+    box-shadow: 0 0 0 1px hsl(var(--primary) / 0.3);
+  }
+
+  .hub-btn {
+    display: inline-flex;
+    height: 24px;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    border-radius: 3px;
+    padding: 0 10px;
+    font-size: 13px;
+    line-height: 1;
+    white-space: nowrap;
+  }
+
+  .hub-btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.45;
+  }
+
+  .hub-btn-primary {
+    border: 1px solid hsl(184 100% 35%);
+    background: hsl(var(--primary));
+    color: hsl(0 0% 100%);
+    font-weight: 700;
+  }
+
+  .hub-btn-secondary,
+  .hub-btn-excel {
+    border: 1px solid hsl(var(--hub-secondary-border));
+    background: hsl(var(--hub-secondary));
+    color: hsl(0 0% 100%);
+  }
+
+  .hub-btn-custom {
+    border: 1px solid hsl(218 10% 62%);
+    background: hsl(0 0% 100%);
+    color: hsl(var(--foreground));
+  }
+
+  .hub-btn-text {
+    height: 22px;
+    border: 0;
+    background: transparent;
+    color: hsl(var(--muted-foreground));
+    padding: 0 4px;
+  }
+
+  .hub-btn-primary:hover,
+  .hub-btn-secondary:hover,
+  .hub-btn-excel:hover,
+  .hub-btn-custom:hover {
+    filter: brightness(0.96);
+  }
+
+  .hub-grid {
+    width: 100%;
+    border-collapse: collapse;
+    background: hsl(0 0% 100%);
+    font-size: 12.5px;
+  }
+
+  .hub-grid th {
+    height: 28px;
+    border: 1px solid hsl(var(--grid-border));
+    background: hsl(var(--grid-header));
+    color: hsl(var(--grid-header-foreground));
+    font-weight: 700;
+    text-align: center;
+  }
+
+  .hub-grid td {
+    border: 1px solid hsl(var(--grid-border));
+    background: hsl(0 0% 100%);
+    padding: 3px 4px;
+    vertical-align: middle;
+  }
+
+  .hub-tabs {
+    height: 31px;
+    border-bottom: 1px solid hsl(var(--hub-line));
+    background: hsl(210 33% 97%);
+  }
+
+  .hub-tab {
+    height: 31px;
+    border-right: 1px solid hsl(var(--hub-line));
+    border-bottom: 2px solid transparent;
+    background: hsl(0 0% 100%);
+    padding: 0 18px;
+    font-size: 13px;
+    color: hsl(var(--muted-foreground));
+  }
+
+  .hub-tab-active {
+    border-bottom-color: hsl(var(--primary));
+    color: hsl(var(--foreground));
+    font-weight: 700;
+  }
+
+  .hub-dialog {
+    overflow: hidden;
+    border: 1px solid hsl(218 10% 62%);
+    border-radius: 3px;
+    background: hsl(0 0% 100%);
+    box-shadow: none;
+  }
+
+  .hub-dialog-head {
+    display: flex;
+    height: 32px;
+    align-items: center;
+    justify-content: space-between;
+    background: hsl(var(--hub-chrome));
+    color: hsl(0 0% 100%);
+    padding: 0 10px;
+  }
+}
+
 @layer base {
   * {
     @apply border-border;
@@ -89,7 +343,7 @@
   body {
     @apply bg-background text-foreground;
     font-family: NanumGothic, "Nanum Gothic", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
-    font-size: 12px;
+    font-size: 12.5px;
     line-height: normal;
   }
 

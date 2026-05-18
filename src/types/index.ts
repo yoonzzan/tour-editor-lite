@@ -56,6 +56,7 @@ export interface ItineraryData {
       child: number;
       infant: number;
       escort: number;
+      foc: number;
     };
     singleCharge?: number;
     fare: {
@@ -131,30 +132,4 @@ export interface QuoteData {
     vat: number;
     total: number;
   };
-}
-
-// ── API 공통 응답 ────────────────────────────────────────
-
-export interface ApiSuccess<T> {
-  ok: true;
-  data: T;
-}
-
-export interface ApiError {
-  ok: false;
-  code: string;
-  message: string;
-}
-
-export type ApiResponse<T> = ApiSuccess<T> | ApiError;
-
-// ── 버전 ────────────────────────────────────────────────
-
-export interface VersionMeta {
-  id: string;
-  versionNo: string;
-  changeReason: string | null;
-  savedAt: string;
-  savedByName: string;
-  savedByRole: Role;
 }

@@ -11,7 +11,7 @@
         "recipient": "",
         "cities": "싱가포르",
         "travelPeriod": { "start": "", "end": "" },
-        "passengers": { "adult": 2, "child": 0, "infant": 0, "escort": 0 },
+        "passengers": { "adult": 2, "child": 0, "infant": 0, "escort": 0, "foc": 0 },
         "fare": {
           "adultPerPerson": 0,
           "childPerPerson": 0,
@@ -220,7 +220,7 @@
         "recipient": "",
         "cities": "방콕, 파타야",
         "travelPeriod": { "start": "", "end": "" },
-        "passengers": { "adult": 2, "child": 0, "infant": 0, "escort": 0 },
+        "passengers": { "adult": 2, "child": 0, "infant": 0, "escort": 0, "foc": 0 },
         "fare": {
           "adultPerPerson": 0,
           "childPerPerson": 0,
@@ -456,7 +456,7 @@
         "recipient": "",
         "cities": "도쿄, 후지산",
         "travelPeriod": { "start": "", "end": "" },
-        "passengers": { "adult": 2, "child": 0, "infant": 0, "escort": 0 },
+        "passengers": { "adult": 2, "child": 0, "infant": 0, "escort": 0, "foc": 0 },
         "fare": {
           "adultPerPerson": 0,
           "childPerPerson": 0,

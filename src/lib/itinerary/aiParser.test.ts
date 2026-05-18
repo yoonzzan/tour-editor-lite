@@ -52,8 +52,6 @@ describe("AI prompt builders", () => {
 
 describe("parseItineraryByAi fallback", () => {
   it("parses quotation metadata separately from simple itinerary days", async () => {
-    process.env.NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET || "test-secret";
-    process.env.DATABASE_URL = process.env.DATABASE_URL || "file:./test.db";
     process.env.OPENAI_API_KEY = "";
 
     const { parseItineraryByAi } = await import("@/lib/itinerary/aiParser");
@@ -105,8 +103,6 @@ describe("parseItineraryByAi fallback", () => {
   });
 
   it("does not fallback to 1899 dates when schedule has no explicit base date", async () => {
-    process.env.NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET || "test-secret";
-    process.env.DATABASE_URL = process.env.DATABASE_URL || "file:./test.db";
     process.env.OPENAI_API_KEY = "";
 
     const { parseItineraryByAi } = await import("@/lib/itinerary/aiParser");
@@ -123,8 +119,6 @@ describe("parseItineraryByAi fallback", () => {
   });
 
   it("returns quality diagnostics for deterministic parsing", async () => {
-    process.env.NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET || "test-secret";
-    process.env.DATABASE_URL = process.env.DATABASE_URL || "file:./test.db";
     process.env.OPENAI_API_KEY = "";
 
     const { parseItineraryWithDiagnostics } = await import("@/lib/itinerary/aiParser");
@@ -154,8 +148,6 @@ describe("parseItineraryByAi fallback", () => {
   });
 
   it("keeps deterministic parsing coverage for schedules after long leading text", async () => {
-    process.env.NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET || "test-secret";
-    process.env.DATABASE_URL = process.env.DATABASE_URL || "file:./test.db";
     process.env.OPENAI_API_KEY = "";
 
     const { parseItineraryWithDiagnostics } = await import("@/lib/itinerary/aiParser");
@@ -183,8 +175,6 @@ describe("parseItineraryByAi fallback", () => {
   });
 
   it("parses abbreviated D-day summaries with hyphen meal markers", async () => {
-    process.env.NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET || "test-secret";
-    process.env.DATABASE_URL = process.env.DATABASE_URL || "file:./test.db";
     process.env.OPENAI_API_KEY = "";
 
     const { parseItineraryWithDiagnostics } = await import("@/lib/itinerary/aiParser");
@@ -208,8 +198,6 @@ D4 : 국립모스크 / 공항샌딩 / 중-한식 / 석-현지식`;
   });
 
   it("parses copied product summaries into overview and basics metadata", async () => {
-    process.env.NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET || "test-secret";
-    process.env.DATABASE_URL = process.env.DATABASE_URL || "file:./test.db";
     process.env.OPENAI_API_KEY = "";
 
     const { parseItineraryByAi } = await import("@/lib/itinerary/aiParser");
@@ -254,8 +242,6 @@ D4 : 국립모스크 / 공항샌딩 / 중-한식 / 석-현지식`;
   });
 
   it("ignores table headers and fee blocks in pasted tabular itineraries", async () => {
-    process.env.NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET || "test-secret";
-    process.env.DATABASE_URL = process.env.DATABASE_URL || "file:./test.db";
     process.env.OPENAI_API_KEY = "";
 
     const { parseItineraryByAi } = await import("@/lib/itinerary/aiParser");
@@ -294,8 +280,6 @@ TOUR FEE (1인 지상비)
   });
 
   it("keeps pasted full itinerary table from copy into meaningful rows only", async () => {
-    process.env.NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET || "test-secret";
-    process.env.DATABASE_URL = process.env.DATABASE_URL || "file:./test.db";
     process.env.OPENAI_API_KEY = "";
 
     const { parseItineraryByAi } = await import("@/lib/itinerary/aiParser");
@@ -318,8 +302,6 @@ TOUR FEE (1인 지상비)
   });
 
   it("parses the provided pasted schedule without generating header/detail noise", async () => {
-    process.env.NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET || "test-secret";
-    process.env.DATABASE_URL = process.env.DATABASE_URL || "file:./test.db";
     process.env.OPENAI_API_KEY = "";
 
     const { parseItineraryByAi } = await import("@/lib/itinerary/aiParser");
@@ -397,8 +379,6 @@ DATE	CITY	TRSFT	TIME	ITINERARY				MEALS
   });
 
   it("keeps schedule body dates from expanding travel period in pasted itinerary blocks", async () => {
-    process.env.NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET || "test-secret";
-    process.env.DATABASE_URL = process.env.DATABASE_URL || "file:./test.db";
     process.env.OPENAI_API_KEY = "";
 
     const { parseItineraryByAi } = await import("@/lib/itinerary/aiParser");
@@ -434,8 +414,6 @@ DATE	CITY	TRSFT	TIME	ITINERARY				MEALS
   });
 
   it("uses table headers when available and ignores standalone body dates for period window", async () => {
-    process.env.NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET || "test-secret";
-    process.env.DATABASE_URL = process.env.DATABASE_URL || "file:./test.db";
     process.env.OPENAI_API_KEY = "";
 
     const { parseItineraryByAi } = await import("@/lib/itinerary/aiParser");
@@ -464,8 +442,6 @@ DATE|CITY|TRSFT|TIME|ITINERARY|MEALS
   });
 
   it("parses attachment-style spreadsheet text without leaking metadata and object noise", async () => {
-    process.env.NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET || "test-secret";
-    process.env.DATABASE_URL = process.env.DATABASE_URL || "file:./test.db";
     process.env.OPENAI_API_KEY = "";
 
     const { parseItineraryByAi } = await import("@/lib/itinerary/aiParser");
@@ -549,8 +525,6 @@ DATE|CITY|TRSFT|TIME|ITINERARY|MEALS
   });
 
   it("keeps post-meal schedule text out of meal values", async () => {
-    process.env.NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET || "test-secret";
-    process.env.DATABASE_URL = process.env.DATABASE_URL || "file:./test.db";
     process.env.OPENAI_API_KEY = "";
 
     const { parseItineraryByAi } = await import("@/lib/itinerary/aiParser");
@@ -574,8 +548,6 @@ DATE|CITY|TRSFT|TIME|ITINERARY|MEALS
   });
 
   it("parses meal values from the trailing meal column in headerless tabular schedules", async () => {
-    process.env.NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET || "test-secret";
-    process.env.DATABASE_URL = process.env.DATABASE_URL || "file:./test.db";
     process.env.OPENAI_API_KEY = "";
 
     const { parseItineraryByAi } = await import("@/lib/itinerary/aiParser");
@@ -606,8 +578,6 @@ DATE|CITY|TRSFT|TIME|ITINERARY|MEALS
   });
 
   it("parses meal values when meal markers and names are split across adjacent cells", async () => {
-    process.env.NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET || "test-secret";
-    process.env.DATABASE_URL = process.env.DATABASE_URL || "file:./test.db";
     process.env.OPENAI_API_KEY = "";
 
     const { parseItineraryByAi } = await import("@/lib/itinerary/aiParser");
@@ -635,8 +605,6 @@ DATE|CITY|TRSFT|TIME|ITINERARY|MEALS
   });
 
   it("keeps sightseeing rows after split meal columns in headerless tabular schedules", async () => {
-    process.env.NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET || "test-secret";
-    process.env.DATABASE_URL = process.env.DATABASE_URL || "file:./test.db";
     process.env.OPENAI_API_KEY = "";
 
     const { parseItineraryByAi } = await import("@/lib/itinerary/aiParser");
@@ -668,8 +636,6 @@ DATE|CITY|TRSFT|TIME|ITINERARY|MEALS
   });
 
   it("parses full Korean meal labels with colon in sparse tabular schedules", async () => {
-    process.env.NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET || "test-secret";
-    process.env.DATABASE_URL = process.env.DATABASE_URL || "file:./test.db";
     process.env.OPENAI_API_KEY = "";
 
     const { parseItineraryByAi } = await import("@/lib/itinerary/aiParser");
@@ -696,8 +662,6 @@ DATE|CITY|TRSFT|TIME|ITINERARY|MEALS
   });
 
   it("keeps each row under the day where it appears in multi-day tabular schedules", async () => {
-    process.env.NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET || "test-secret";
-    process.env.DATABASE_URL = process.env.DATABASE_URL || "file:./test.db";
     process.env.OPENAI_API_KEY = "";
 
     const { parseItineraryByAi } = await import("@/lib/itinerary/aiParser");
@@ -730,8 +694,6 @@ DATE|CITY|TRSFT|TIME|ITINERARY|MEALS
   });
 
   it("ignores date cells while preserving itinerary text in the same row", async () => {
-    process.env.NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET || "test-secret";
-    process.env.DATABASE_URL = process.env.DATABASE_URL || "file:./test.db";
     process.env.OPENAI_API_KEY = "";
 
     const { parseItineraryByAi } = await import("@/lib/itinerary/aiParser");
@@ -754,8 +716,6 @@ DATE|CITY|TRSFT|TIME|ITINERARY|MEALS
   });
 
   it("extracts OCR quote metadata and removes hotel label-only schedule rows", async () => {
-    process.env.NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET || "test-secret";
-    process.env.DATABASE_URL = process.env.DATABASE_URL || "file:./test.db";
     process.env.OPENAI_API_KEY = "";
 
     const { parseItineraryByAi } = await import("@/lib/itinerary/aiParser");
@@ -793,8 +753,6 @@ DATE|CITY|TRSFT|TIME|ITINERARY|MEALS
 
 describe("parseItineraryByAi AI pipeline", () => {
   it("runs structural analysis before strict JSON generation and recalculates day dates on the server", async () => {
-    process.env.NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET || "test-secret";
-    process.env.DATABASE_URL = process.env.DATABASE_URL || "file:./test.db";
     process.env.OPENAI_API_KEY = "test-key";
     vi.resetModules();
 
@@ -887,8 +845,6 @@ describe("parseItineraryByAi AI pipeline", () => {
   });
 
   it("passes extracted meal and hotel evidence to the AI analysis step", async () => {
-    process.env.NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET || "test-secret";
-    process.env.DATABASE_URL = process.env.DATABASE_URL || "file:./test.db";
     process.env.OPENAI_API_KEY = "test-key";
     vi.resetModules();
 
@@ -963,8 +919,6 @@ describe("parseItineraryByAi AI pipeline", () => {
   });
 
   it("supplements day-level hotels from fallback rows when AI omits later accommodation items", async () => {
-    process.env.NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET || "test-secret";
-    process.env.DATABASE_URL = process.env.DATABASE_URL || "file:./test.db";
     process.env.OPENAI_API_KEY = "test-key";
     vi.resetModules();
 
@@ -1042,8 +996,6 @@ describe("parseItineraryByAi AI pipeline", () => {
   });
 
   it("corrects AI meal labels with fallback values from trailing meal columns", async () => {
-    process.env.NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET || "test-secret";
-    process.env.DATABASE_URL = process.env.DATABASE_URL || "file:./test.db";
     process.env.OPENAI_API_KEY = "test-key";
     vi.resetModules();
 
@@ -1129,8 +1081,6 @@ describe("parseItineraryByAi AI pipeline", () => {
   });
 
   it("keeps AI results when they are much richer than the tabular fallback", async () => {
-    process.env.NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET || "test-secret";
-    process.env.DATABASE_URL = process.env.DATABASE_URL || "file:./test.db";
     process.env.OPENAI_API_KEY = "test-key";
     vi.resetModules();
 
@@ -1200,8 +1150,6 @@ describe("parseItineraryByAi AI pipeline", () => {
   });
 
   it("uses raw tabular meals and hotels when keeping richer AI schedules", async () => {
-    process.env.NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET || "test-secret";
-    process.env.DATABASE_URL = process.env.DATABASE_URL || "file:./test.db";
     process.env.OPENAI_API_KEY = "test-key";
     vi.resetModules();
 
@@ -1289,8 +1237,6 @@ describe("parseItineraryByAi AI pipeline", () => {
   });
 
   it("salvages AI responses with nullable sections and Korean field aliases", async () => {
-    process.env.NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET || "test-secret";
-    process.env.DATABASE_URL = process.env.DATABASE_URL || "file:./test.db";
     process.env.OPENAI_API_KEY = "test-key";
     vi.resetModules();
 
@@ -1352,8 +1298,6 @@ describe("parseItineraryByAi AI pipeline", () => {
   });
 
   it("keeps AI schedule items when PDF-like JSON uses strings or detail-only items", async () => {
-    process.env.NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET || "test-secret";
-    process.env.DATABASE_URL = process.env.DATABASE_URL || "file:./test.db";
     process.env.OPENAI_API_KEY = "test-key";
     vi.resetModules();
 
@@ -1422,8 +1366,6 @@ describe("parseItineraryByAi AI pipeline", () => {
   });
 
   it("preserves AI metadata when tabular fallback is selected for schedule rows", async () => {
-    process.env.NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET || "test-secret";
-    process.env.DATABASE_URL = process.env.DATABASE_URL || "file:./test.db";
     process.env.OPENAI_API_KEY = "test-key";
     vi.resetModules();
 
@@ -1507,8 +1449,6 @@ describe("parseItineraryByAi AI pipeline", () => {
   });
 
   it("splits meal prefixes embedded in AI sightseeing and transfer content", async () => {
-    process.env.NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET || "test-secret";
-    process.env.DATABASE_URL = process.env.DATABASE_URL || "file:./test.db";
     process.env.OPENAI_API_KEY = "test-key";
     vi.resetModules();
 

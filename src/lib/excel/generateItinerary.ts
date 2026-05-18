@@ -609,24 +609,30 @@ function addOverviewSection(sheet: ExcelJS.Worksheet, data: ItineraryData): void
     bg: STYLE.headerBg,
     color: "FFFFFFFF",
   });
-  safeMergeCells(sheet, `B${row6.number}:D${row6.number}`);
+  safeMergeCells(sheet, `B${row6.number}:C${row6.number}`);
   setCellValue(row6.getCell("B"), formatPassenger(data.overview.passengers));
-  setCellValue(row6.getCell("E"), "인솔자", {
+  setCellValue(row6.getCell("D"), "인솔자", {
     bold: true,
     align: "center",
     bg: STYLE.headerBg,
     color: "FFFFFFFF",
   });
-  setCellValue(row6.getCell("F"), `${data.overview.passengers.escort}명`);
-  setCellValue(row6.getCell("G"), "1인실 이용금액", {
+  setCellValue(row6.getCell("E"), `${data.overview.passengers.escort}명`);
+  setCellValue(row6.getCell("F"), "FOC", {
     bold: true,
     align: "center",
     bg: STYLE.headerBg,
     color: "FFFFFFFF",
   });
-  safeMergeCells(sheet, `H${row6.number}:I${row6.number}`);
+  setCellValue(row6.getCell("G"), `${data.overview.passengers.foc ?? 0}명`);
+  setCellValue(row6.getCell("H"), "1인실 이용금액", {
+    bold: true,
+    align: "center",
+    bg: STYLE.headerBg,
+    color: "FFFFFFFF",
+  });
   const occupancy = data.basics?.accommodation?.occupancy?.trim() ?? "";
-  setCellValue(row6.getCell("H"), occupancy.length > 0 ? occupancy : "", {
+  setCellValue(row6.getCell("I"), occupancy.length > 0 ? occupancy : "", {
     align: "left",
     wrap: true,
   });

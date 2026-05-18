@@ -100,7 +100,8 @@ function buildMealItems(
  */
 export function generateQuoteItems(itinerary: ItineraryData): QuoteItem[] {
   const items: QuoteItem[] = [];
-  const quantity = Math.max(0, itinerary.overview.passengers.adult);
+  const { adult, child, infant } = itinerary.overview.passengers;
+  const quantity = Math.max(0, adult + child + infant);
 
   // 항공 (basics.flight)
   const { flight } = itinerary.basics;

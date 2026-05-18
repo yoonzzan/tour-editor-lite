@@ -1,48 +1,13 @@
 // src/lib/config.ts — 환경변수 타입 안전 접근
 // 모든 process.env 접근은 이 파일을 통해서만
 
-function requireEnv(key: string): string {
-  const value = process.env[key];
-  if (!value) {
-    throw new Error(`Missing required environment variable: ${key}`);
-  }
-  return value;
-}
-
-function resolveAuthSecret(): string {
-  const nextAuthSecret = process.env.NEXTAUTH_SECRET;
-  const legacyAuthSecret = process.env.AUTH_SECRET;
-
-  if (!nextAuthSecret && !legacyAuthSecret) {
-    throw new Error(
-      "Missing required environment variable: NEXTAUTH_SECRET (AUTH_SECRET is optional fallback)"
-    );
-  }
-
-  if (
-    nextAuthSecret &&
-    legacyAuthSecret &&
-    nextAuthSecret !== legacyAuthSecret
-  ) {
-    throw new Error(
-      "AUTH_SECRET and NEXTAUTH_SECRET must match to avoid JWT verification mismatch."
-    );
-  }
-
-  return nextAuthSecret ?? legacyAuthSecret!;
-}
-
 function optionalEnv(key: string, fallback = ""): string {
   return process.env[key] ?? fallback;
 }
 
 export const config = {
-  auth: {
-    secret: resolveAuthSecret(),
-    url: optionalEnv("NEXTAUTH_URL", "http://localhost:3000"),
-  },
-  db: {
-    url: requireEnv("DATABASE_URL"),
+  access: {
+    code: optionalEnv("ACCESS_CODE"),
   },
   mcp: {
     useMock: optionalEnv("USE_MOCK_MCP", "true") === "true",
@@ -64,8 +29,4 @@ export const config = {
     baseUrl: optionalEnv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
     parseTimeoutMs: Number(optionalEnv("OPENAI_PARSE_TIMEOUT_MS", "30000")),
   },
-  allowedOrigins: optionalEnv(
-    "ALLOWED_PARENT_ORIGINS",
-    "http://localhost:8080"
-  ).split(","),
 } as const;

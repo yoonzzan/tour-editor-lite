@@ -40,6 +40,9 @@ import {
 
 type SummaryNotes = NonNullable<ItineraryData["basics"]["summaryNotes"]>;
 type SummaryNoteKey = keyof SummaryNotes;
+type Passengers = ItineraryData["overview"]["passengers"];
+type Fare = ItineraryData["overview"]["fare"];
+type Overview = ItineraryData["overview"];
 
 const EMPTY_SUMMARY_NOTES: SummaryNotes = {
   flight: "",
@@ -56,14 +59,32 @@ function normalizeNumberInputValue(value: string): string {
   return value.replace(/^0+(?=\d)/u, "");
 }
 
-function readNonNegativeInput(input: HTMLInputElement): number {
-  const normalized = normalizeNumberInputValue(input.value);
-  input.value = normalized;
+function parseNonNegativeInteger(value: string): number {
+  const normalized = normalizeNumberInputValue(value.replace(/[^\d]/gu, ""));
   return Math.max(0, Number(normalized));
 }
 
+function formatIntegerInputValue(value: number): string {
+  if (!Number.isFinite(value)) return "0";
+  return Math.max(0, Math.trunc(value)).toLocaleString("ko-KR");
+}
+
+function readNonNegativeInput(input: HTMLInputElement): number {
+  const nextValue = parseNonNegativeInteger(input.value);
+  input.value = formatIntegerInputValue(nextValue);
+  return nextValue;
+}
+
+function calculateFareTotal(passengers: Passengers, fare: Fare): number {
+  return (
+    passengers.adult * fare.adultPerPerson +
+    passengers.child * fare.childPerPerson +
+    passengers.infant * fare.infantPerPerson
+  );
+}
+
 const TEXTAREA_CLASS =
-  "min-h-[34px] resize-none overflow-hidden rounded-md border border-input bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring";
+  "hub-textarea overflow-hidden";
 
 function AutoResizeTextarea({
   id,
@@ -83,6 +104,10 @@ function AutoResizeTextarea({
     if (!textarea) return;
 
     textarea.style.height = "auto";
+    if (value.trim().length === 0) {
+      textarea.style.height = "var(--hub-control-height)";
+      return;
+    }
     textarea.style.height = `${textarea.scrollHeight}px`;
   }, [value]);
 
@@ -106,10 +131,23 @@ export function ItineraryEditor() {
 
   const update = useCallback(
     (patch: Partial<ItineraryData>) => {
-      if (!itinerary) return;
-      setItinerary({ ...itinerary, ...patch });
+      const currentItinerary = useEditorStore.getState().itinerary;
+      if (!currentItinerary) return;
+      setItinerary({ ...currentItinerary, ...patch });
     },
-    [itinerary, setItinerary]
+    [setItinerary]
+  );
+
+  const updateOverview = useCallback(
+    (updater: (currentOverview: Overview) => Overview) => {
+      const currentItinerary = useEditorStore.getState().itinerary;
+      if (!currentItinerary) return;
+      setItinerary({
+        ...currentItinerary,
+        overview: updater(currentItinerary.overview),
+      });
+    },
+    [setItinerary]
   );
 
   if (!itinerary) return null;
@@ -120,6 +158,7 @@ export function ItineraryEditor() {
   // 총금액 자동 계산
   const { adult, child, infant } = overview.passengers;
   const { adultPerPerson, childPerPerson, infantPerPerson } = overview.fare;
+  const passengerTotal = adult + child + infant;
   const autoTotal =
     adult * adultPerPerson + child * childPerPerson + infant * infantPerPerson;
 
@@ -171,10 +210,13 @@ export function ItineraryEditor() {
   return (
     <div className="flex w-full flex-col gap-4 pb-16">
       {/* ── 헤더 (T-302) ─────────────────────────────── */}
-      <section className="rounded-lg border border-border bg-card p-4">
-        <h2 className="mb-3 text-sm font-semibold text-foreground">
+      <div className="flex items-center justify-between hub-section-head">
+        <h2 className="text-[13px] font-semibold text-foreground">
           일정표 에디터
         </h2>
+      </div>
+
+      <section className="hub-section p-3">
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           <div className="flex flex-col gap-1">
             <label htmlFor="groupName" className="text-xs text-muted-foreground">
@@ -187,7 +229,7 @@ export function ItineraryEditor() {
               onChange={(e) =>
                 update({ header: { ...header, groupName: e.target.value } })
               }
-              className="rounded-md border border-input bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              className="hub-input"
               placeholder="단체명 입력"
             />
           </div>
@@ -202,15 +244,15 @@ export function ItineraryEditor() {
               onChange={(e) =>
                 update({ header: { ...header, writtenAt: e.target.value } })
               }
-              className="rounded-md border border-input bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              className="hub-input"
             />
           </div>
         </div>
       </section>
 
       {/* ── 견적 개요 테이블 (T-303) ─────────────────── */}
-      <section className="rounded-lg border border-border bg-card p-4">
-        <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+      <section className="hub-section p-3">
+        <h2 className="mb-3 hub-section-title">
           견적 개요
         </h2>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -223,7 +265,7 @@ export function ItineraryEditor() {
               onChange={(e) =>
                 update({ overview: { ...overview, recipient: e.target.value } })
               }
-              className="rounded-md border border-input bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              className="hub-input"
               placeholder="수신처 입력"
             />
           </div>
@@ -236,7 +278,7 @@ export function ItineraryEditor() {
               onChange={(e) =>
                 update({ overview: { ...overview, cities: e.target.value } })
               }
-              className="rounded-md border border-input bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              className="hub-input"
               placeholder="예: 싱가포르, 방콕"
             />
           </div>
@@ -254,7 +296,7 @@ export function ItineraryEditor() {
                   },
                 })
               }
-              className="rounded-md border border-input bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              className="hub-input"
             />
           </div>
           <div className="flex flex-col gap-1">
@@ -271,49 +313,98 @@ export function ItineraryEditor() {
                   },
                 })
               }
-              className="rounded-md border border-input bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              className="hub-input"
             />
           </div>
-          {/* 인원 */}
-          {(
-            [
-              { key: "adult", label: "성인" },
-              { key: "child", label: "아동" },
-              { key: "infant", label: "유아" },
-              { key: "escort", label: "인솔자" },
-            ] as const
-          ).map(({ key, label }) => (
-            <div key={key} className="flex flex-col gap-1">
-              <label htmlFor={`pax-${key}`} className="text-xs text-muted-foreground">
-                {label} (명)
+          <div className="flex flex-col gap-1 md:col-span-2">
+            <span className="text-xs text-muted-foreground">인원 수</span>
+            <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
+              {(
+                [
+                  { key: "adult", label: "성인" },
+                  { key: "child", label: "아동" },
+                  { key: "infant", label: "유아" },
+                ] as const
+              ).map(({ key, label }) => (
+                <label key={key} htmlFor={`pax-${key}`} className="flex min-w-0 flex-col gap-1">
+                  <span className="text-xs text-muted-foreground">{label}</span>
+                  <input
+                    id={`pax-${key}`}
+                    type="text"
+                    inputMode="numeric"
+                    value={formatIntegerInputValue(overview.passengers[key])}
+                    onChange={(e) => {
+                      const nextValue = readNonNegativeInput(e.currentTarget);
+                      updateOverview((currentOverview) => {
+                        const nextPassengers = {
+                          ...currentOverview.passengers,
+                          [key]: nextValue,
+                        };
+                        return {
+                          ...currentOverview,
+                          passengers: nextPassengers,
+                          fare: {
+                            ...currentOverview.fare,
+                            total: calculateFareTotal(nextPassengers, currentOverview.fare),
+                          },
+                        };
+                      });
+                    }}
+                    className="hub-input w-full text-right"
+                  />
+                </label>
+              ))}
+              <label htmlFor="pax-total" className="flex min-w-0 flex-col gap-1">
+                <span className="text-xs text-muted-foreground">총인원 (자동계산)</span>
+                <div
+                  id="pax-total"
+                  className="hub-input w-full items-center justify-end bg-muted/40 text-right font-medium"
+                >
+                  {formatIntegerInputValue(passengerTotal)}
+                </div>
               </label>
-              <input
-                id={`pax-${key}`}
-                type="number"
-                min={0}
-                inputMode="numeric"
-                value={overview.passengers[key]}
-                onChange={(e) =>
-                  update({
-                    overview: {
-                      ...overview,
-                      passengers: {
-                        ...overview.passengers,
-                        [key]: readNonNegativeInput(e.currentTarget),
-                      },
-                    },
-                  })
-                }
-                className="rounded-md border border-input bg-background px-3 py-1.5 text-sm text-right focus:outline-none focus:ring-2 focus:ring-ring"
-              />
+              {(
+                [
+                  { key: "escort", label: "인솔자" },
+                  { key: "foc", label: "FOC" },
+                ] as const
+              ).map(({ key, label }) => (
+                <label key={key} htmlFor={`pax-${key}`} className="flex min-w-0 flex-col gap-1">
+                  <span className="text-xs text-muted-foreground">{label}</span>
+                  <input
+                    id={`pax-${key}`}
+                    type="text"
+                    inputMode="numeric"
+                    value={formatIntegerInputValue(overview.passengers[key])}
+                    onChange={(e) => {
+                      const nextValue = readNonNegativeInput(e.currentTarget);
+                      updateOverview((currentOverview) => {
+                        const nextPassengers = {
+                          ...currentOverview.passengers,
+                          [key]: nextValue,
+                        };
+                        return {
+                          ...currentOverview,
+                          passengers: nextPassengers,
+                          fare: {
+                            ...currentOverview.fare,
+                            total: calculateFareTotal(nextPassengers, currentOverview.fare),
+                          },
+                        };
+                      });
+                    }}
+                    className="hub-input w-full text-right"
+                  />
+                </label>
+              ))}
             </div>
-          ))}
+          </div>
         </div>
       </section>
 
       {/* ── 여행요금 (T-304) ──────────────────────────── */}
-      <section className="rounded-lg border border-border bg-card p-4">
-        <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+      <section className="hub-section p-3">
+        <h2 className="mb-3 hub-section-title">
           여행요금
         </h2>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -330,30 +421,32 @@ export function ItineraryEditor() {
               </label>
               <input
                 id={`fare-${key}`}
-                type="number"
-                min={0}
-                step={1000}
+                type="text"
                 inputMode="numeric"
-                value={overview.fare[key]}
-                onChange={(e) =>
-                  update({
-                    overview: {
-                      ...overview,
+                value={formatIntegerInputValue(overview.fare[key])}
+                onChange={(e) => {
+                  const nextValue = readNonNegativeInput(e.currentTarget);
+                  updateOverview((currentOverview) => {
+                    const nextFare = {
+                      ...currentOverview.fare,
+                      [key]: nextValue,
+                    };
+                    return {
+                      ...currentOverview,
                       fare: {
-                        ...overview.fare,
-                        [key]: readNonNegativeInput(e.currentTarget),
-                        total: autoTotal,
+                        ...nextFare,
+                        total: calculateFareTotal(currentOverview.passengers, nextFare),
                       },
-                    },
-                  })
-                }
-                className="rounded-md border border-input bg-background px-3 py-1.5 text-sm text-right focus:outline-none focus:ring-2 focus:ring-ring"
+                    };
+                  });
+                }}
+                className="hub-input text-right"
               />
             </div>
           ))}
           <div className="flex flex-col gap-1">
-            <label className="text-xs text-muted-foreground">총금액 (자동 계산)</label>
-            <div className="flex items-center rounded-md border border-input bg-muted/40 px-3 py-1.5 text-sm font-medium text-foreground">
+            <label className="text-xs text-muted-foreground">총금액 (자동계산)</label>
+            <div className="hub-input items-center justify-end bg-muted/40 text-right font-medium">
               {autoTotal.toLocaleString()} 원
             </div>
           </div>
@@ -361,12 +454,12 @@ export function ItineraryEditor() {
       </section>
 
       {/* ── 일정 기본 항목 (T-305) ───────────────────── */}
-      <section className="rounded-lg border border-border bg-card p-4">
-        <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+      <section className="hub-section p-3">
+        <h2 className="mb-3 hub-section-title">
           일정 기본 항목
         </h2>
         <div className="grid grid-cols-1 gap-4">
-          <div className="grid grid-cols-1 gap-3 rounded-md border border-border bg-muted/20 p-3 md:grid-cols-[minmax(0,1fr)_16rem]">
+          <div className="grid grid-cols-1 gap-3 hub-section p-3 md:grid-cols-[minmax(0,1fr)_16rem]">
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
               {(
                 [
@@ -393,7 +486,7 @@ export function ItineraryEditor() {
                         },
                       })
                     }
-                    className="rounded-md border border-input bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                    className="hub-input"
                   />
                 </div>
               ))}
@@ -410,7 +503,7 @@ export function ItineraryEditor() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-3 rounded-md border border-border bg-muted/20 p-3 md:grid-cols-[minmax(0,1fr)_16rem]">
+          <div className="grid grid-cols-1 gap-3 hub-section p-3 md:grid-cols-[minmax(0,1fr)_16rem]">
             <div className="flex flex-col gap-1">
               <label htmlFor="basics-flight-localVehicle" className="text-xs text-muted-foreground">
                 현지 차량
@@ -430,7 +523,7 @@ export function ItineraryEditor() {
                     },
                   })
                 }
-                className="rounded-md border border-input bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                className="hub-input"
               />
             </div>
             <div className="flex flex-col gap-1">
@@ -445,7 +538,7 @@ export function ItineraryEditor() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-3 rounded-md border border-border bg-muted/20 p-3 md:grid-cols-[minmax(0,1fr)_16rem]">
+          <div className="grid grid-cols-1 gap-3 hub-section p-3 md:grid-cols-[minmax(0,1fr)_16rem]">
             <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
               {(
                 [
@@ -473,7 +566,7 @@ export function ItineraryEditor() {
                         },
                       })
                     }
-                    className="rounded-md border border-input bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                    className="hub-input"
                   />
                 </div>
               ))}
@@ -494,10 +587,9 @@ export function ItineraryEditor() {
             [
               { key: "included", label: "포함 사항" },
               { key: "excluded", label: "불포함 사항" },
-              { key: "optionalTour", label: "선택 관광" },
-            ] as { key: "included" | "excluded" | "optionalTour"; label: string }[]
+            ] as { key: "included" | "excluded"; label: string }[]
           ).map(({ key, label }) => (
-            <div key={key} className="grid grid-cols-1 gap-3 rounded-md border border-border bg-muted/20 p-3 md:grid-cols-[minmax(0,1fr)_16rem]">
+            <div key={key} className="grid grid-cols-1 gap-3 hub-section p-3 md:grid-cols-[minmax(0,1fr)_16rem]">
               <div className="flex flex-col gap-1">
                 <label htmlFor={`basics-${key}`} className="text-xs text-muted-foreground">
                   {label}
@@ -523,10 +615,32 @@ export function ItineraryEditor() {
             </div>
           ))}
 
-          <div className="grid grid-cols-1 gap-3 rounded-md border border-border bg-muted/20 p-3 md:grid-cols-[minmax(0,1fr)_16rem]">
+          <div className="grid grid-cols-1 gap-3 hub-section p-3">
+            <div className="flex flex-col gap-1">
+              <label htmlFor="basics-optionalTour" className="text-xs text-muted-foreground">
+                선택관광
+              </label>
+              <AutoResizeTextarea
+                id="basics-optionalTour"
+                value={basics.optionalTour}
+                onChange={(value) =>
+                  update({ basics: { ...basics, optionalTour: value } })
+                }
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label htmlFor="summary-note-optionalTour" className="text-xs text-muted-foreground">
+                선택관광 비고
+              </label>
+              <AutoResizeTextarea
+                id="summary-note-optionalTour"
+                value={summaryNotes.optionalTour}
+                onChange={(value) => updateSummaryNote("optionalTour", value)}
+              />
+            </div>
             <div className="flex flex-col gap-1">
               <label htmlFor="shoppingCenters" className="text-xs text-muted-foreground">
-                쇼핑센터 방문 수
+                쇼핑횟수
               </label>
               <input
                 id="shoppingCenters"
@@ -542,7 +656,7 @@ export function ItineraryEditor() {
                     },
                   })
                 }
-                className="w-24 rounded-md border border-input bg-background px-3 py-1.5 text-sm text-right focus:outline-none focus:ring-2 focus:ring-ring"
+                className="w-24 hub-input text-right"
               />
             </div>
             <div className="flex flex-col gap-1">
@@ -573,13 +687,13 @@ export function ItineraryEditor() {
       {/* ── 일자별 블록 (T-306~T-312) ────────────────── */}
       <section className="flex flex-col gap-4">
         <div className="flex items-center justify-between gap-3">
-          <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            일자별 일정
+          <h2 className="hub-section-title">
+            일차별 일정
           </h2>
           <button
             type="button"
             onClick={addDay}
-            className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:border-primary hover:text-primary"
+            className="hub-btn hub-btn-custom"
           >
             + 일차 추가
           </button>

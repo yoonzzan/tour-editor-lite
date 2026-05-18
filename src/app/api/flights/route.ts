@@ -4,8 +4,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import flightsMock from "@/mocks/flights.json";
-import type { Role } from "@/types";
-import { getApiToken } from "@/lib/auth";
+import { requireConverterAccess } from "@/lib/converter/access";
 
 export type FlightFareType = "INDIVIDUAL" | "GROUP";
 export type FlightTripType = "ONE_WAY" | "ROUND_TRIP";
@@ -43,18 +42,8 @@ export type FlightFareOption =
     });
 
 export async function GET(req: NextRequest) {
-  const token = await getApiToken(req);
-  if (!token?.sub) {
-    return NextResponse.json({ error: "인증이 필요합니다." }, { status: 401 });
-  }
-
-  // partner는 항공 조회 불가 (T-605)
-  if ((token.role as Role) === "PARTNER") {
-    return NextResponse.json(
-      { error: "협력사는 항공 조회를 할 수 없습니다." },
-      { status: 403 }
-    );
-  }
+  const accessError = requireConverterAccess(req);
+  if (accessError) return accessError;
 
   const mode = req.nextUrl.searchParams.get("mode");
   const tripType = mode === "ONE_WAY" || mode === "ROUND_TRIP" ? mode : req.nextUrl.searchParams.get("tripType");

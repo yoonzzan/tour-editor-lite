@@ -39,9 +39,9 @@
 | `overview.passengers.child` | `data.baseProductInfo.chdCnt` | 숫자 미수신 시 0 |
 | `overview.passengers.infant` | `data.baseProductInfo.infCnt` | 숫자 미수신 시 0 |
 | `overview.passengers.escort` | `data.baseProductInfo.escortCnt` | 숫자 미수신 시 0 |
-| `overview.fare.adultPerPerson` | `baseProductInfo.adtAmt` | 미수신 시 0 |
-| `overview.fare.childPerPerson` | `baseProductInfo.chdAmt` | 미수신 시 0 |
-| `overview.fare.infantPerPerson` | `baseProductInfo.infAmt` | 미수신 시 0 |
+| `overview.fare.adultPerPerson` | `baseProductInfo.adtTotlAmt`, fallback `adultTotalPerPerson`, `adtAmt`, `adultPerPerson`, `adtTaduAmt` | 성인 1인 총 상품가 우선, 미수신 시 0 |
+| `overview.fare.childPerPerson` | `baseProductInfo.chdTotlAmt`, fallback `childTotalPerPerson`, `chdAmt`, `childPerPerson`, `chdTaduAmt` | 아동 1인 총 상품가 우선, 미수신 시 0 |
+| `overview.fare.infantPerPerson` | `baseProductInfo.infTotlAmt`, fallback `infantTotalPerPerson`, `infAmt`, `infantPerPerson`, `infTaduAmt` | 유아 1인 총 상품가 우선, 미수신 시 0 |
 | `overview.fare.total` | `baseProductInfo.adtTotlAmt` | 미수신 시 `total` 또는 파생 값 사용 |
 | `overview.fare.totalWithCard` | `baseProductInfo.totalWithCard` | 미수신 시 `total`과 동일 |
 | `overview.singleCharge` | `baseProductInfo.snglAddAmt` | 빈 값이면 0 |
@@ -56,8 +56,8 @@
 | `basics.accommodation.hotel` | `itineraryInfo.schdInfoList[].htlInfoList[].htlKoNm|htlEnNm` | 일차별 호텔명을 모두 수집해 중복 제거 후 결합 |
 | `basics.accommodation.grade` | `baseProductInfo.htlEnn` | 그대로 사용 |
 | `basics.accommodation.occupancy` | `baseProductInfo.chdInclRoomYn` | 그대로 사용 |
-| `basics.included` | `baseProductInfo.trvlExpnInclList` | `trvlExpnClstNm: trvlExpnDesc` 조합 후 구분자(`/`) 결합 |
-| `basics.excluded` | `baseProductInfo.trvlChcExpnList`(실제 매핑상 제외/불포함 항목으로 사용 중) | `trvlExpnClstNm: trvlExpnDesc` 조합 후 구분자(`/`) 결합 |
+| `basics.included` | `baseProductInfo.trvlExpnInclList` | `trvlExpnDesc` 내용만 결합. `[제세금]`, `[여행자보험]`, `[가이드/기사]` 같은 `trvlExpnClstNm` 구분자 prefix는 표시하지 않음 |
+| `basics.excluded` | `baseProductInfo.trvlExpnNoneInclList` 또는 `trvlNoneInclList` | `trvlExpnDesc` 내용만 결합. `trvlExpnClstNm` 구분자 prefix는 표시하지 않음 |
 | `basics.optionalTour` | `baseProductInfo.trvlChcExpnList.corePntTitlNm` 계열 | 텍스트 결합 후 중복 제거 |
 | `basics.shoppingCenters` | `baseProductInfo.shpnCntrVistCnt` | 숫자화 후 최대 0 이상 보정 |
 | `basics.notes` | `baseProductInfo.noteTrvlInfo.noteTrvlRmkCont`, `baseProductInfo.noteResInfo.noteResRmkCont`, `scheduleAndTouristSpotInfo.optiontourRemarksInfo.remarkData*` | 각 문자열을 정규화/병합, 빈 값 제거, ` | `로 결합 |
@@ -103,4 +103,3 @@
 
 - 매핑 로직: `src/lib/mcp/mapSaleProductToItinerary.ts`
 - 타입: `src/types/index.ts`
-

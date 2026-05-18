@@ -5,6 +5,7 @@
 import { useState, Fragment } from "react";
 import Image from "next/image";
 import { useEditorStore } from "@/hooks/useEditorStore";
+import { getStoredAccessCode } from "@/lib/converter/clientAccess";
 import type { ItineraryData, QuoteCategory, QuoteData } from "@/types";
 import { buildItineraryDisplayDays } from "@/lib/itinerary/itineraryDisplay";
 import { formatDateDotInKorea, formatDateKorInKorea, todayInKorea } from "@/lib/date/korea";
@@ -14,65 +15,69 @@ import {
   getQuoteExchangeRates,
 } from "@/lib/quote/currency";
 
-const PREVIEW_DOCUMENT_CLASS = "w-full space-y-6 px-6 py-6";
-const PREVIEW_WIDE_TABLE_CLASS = "min-w-[1080px] w-full table-fixed text-xs";
+const PREVIEW_DOCUMENT_CLASS = "w-full space-y-6 px-6 py-6 text-[12.5px]";
+const PREVIEW_WIDE_TABLE_CLASS = "min-w-[1080px] w-full table-fixed text-[12.5px] leading-[18px]";
 
 type PreviewTab = "itinerary" | "quote";
 
 interface Props {
   onClose: () => void;
-  quoteId: string | null;
 }
 
-export function PreviewModal({ onClose, quoteId }: Props) {
+export function PreviewModal({ onClose }: Props) {
   const [activeTab, setActiveTab] = useState<PreviewTab>("itinerary");
   const { itinerary, quote } = useEditorStore();
 
-  async function handleDownload(type: "itinerary" | "cost") {
-    if (!quoteId) return;
-
+  function handleDownload(type: "itinerary" | "cost") {
     if (type === "itinerary" && !itinerary) return;
     if (type === "cost" && !quote) return;
 
-    const payload =
-      type === "itinerary" ? { itineraryData: itinerary } : { quoteData: quote };
+    const payload = { itineraryData: itinerary, quoteData: quote };
+    const endpoint = `/api/export?type=${type}`;
 
-    const response = await fetch(`/api/quotes/${quoteId}/export?type=${type}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(payload),
+    const frameName = `excel-download-${Date.now().toString(36)}`;
+    const iframe = document.createElement("iframe");
+    iframe.name = frameName;
+    iframe.style.display = "none";
+
+    const form = document.createElement("form");
+    form.method = "POST";
+    form.action = endpoint;
+    form.target = frameName;
+    form.style.display = "none";
+
+    const payloadInput = document.createElement("input");
+    payloadInput.type = "hidden";
+    payloadInput.name = "payload";
+    payloadInput.value = JSON.stringify(payload);
+    form.appendChild(payloadInput);
+
+    const accessInput = document.createElement("input");
+    accessInput.type = "hidden";
+    accessInput.name = "accessCode";
+    accessInput.value = getStoredAccessCode();
+    form.appendChild(accessInput);
+
+    let cleanedUp = false;
+    const cleanup = () => {
+      if (cleanedUp) return;
+      cleanedUp = true;
+      form.remove();
+      iframe.remove();
+    };
+
+    iframe.addEventListener("load", () => {
+      const text = iframe.contentDocument?.body?.innerText.trim();
+      if (text) {
+        window.alert(`엑셀 다운로드에 실패했습니다.\n${text}`);
+      }
+      window.setTimeout(cleanup, 1000);
     });
 
-    if (!response.ok) {
-      const body = await response.text();
-      window.alert(
-        `엑셀 다운로드에 실패했습니다: ${response.status} ${response.statusText}${
-          body ? `\n${body}` : ""
-        }`
-      );
-      return;
-    }
-
-    const blob = await response.blob();
-    const disposition = response.headers.get("Content-Disposition") ?? "";
-    const filenameMatch = /filename\*=UTF-8''([^;]+)/i.exec(disposition);
-    const fallbackMatch = /filename=\"([^\"]+)\"/i.exec(disposition);
-    const filename = filenameMatch
-      ? decodeURIComponent(filenameMatch[1])
-      : fallbackMatch
-        ? fallbackMatch[1]
-        : "export.xlsx";
-
-    const link = document.createElement("a");
-    const url = URL.createObjectURL(blob);
-    link.href = url;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    document.body.appendChild(iframe);
+    document.body.appendChild(form);
+    form.submit();
+    window.setTimeout(cleanup, 60000);
   }
 
   return (
@@ -85,13 +90,13 @@ export function PreviewModal({ onClose, quoteId }: Props) {
       <div
         role="dialog"
         aria-modal="true"
-        className="z-modal flex h-[90vh] w-[94vw] max-w-[1600px] flex-col overflow-hidden rounded-md border border-border bg-background shadow-none"
+        className="hub-dialog z-modal flex h-[90vh] w-[94vw] max-w-[1600px] flex-col overflow-hidden"
       >
-        <div className="grid h-8 shrink-0 grid-cols-[minmax(0,auto)_1fr_minmax(0,auto)] items-center gap-2 bg-chrome-sidebar px-2 text-chrome-sidebar-foreground">
-          <span className="px-1 text-xs font-semibold">미리보기</span>
+        <div className="grid h-8 shrink-0 grid-cols-[minmax(0,auto)_1fr_minmax(0,auto)] items-center gap-2 bg-[hsl(var(--hub-chrome))] px-2 text-chrome-sidebar-foreground">
+          <span className="px-1 text-[13px] font-bold leading-5">미리보기</span>
 
           <div className="flex justify-center">
-            <div className="inline-flex gap-0.5 rounded-md bg-white/10 p-0.5">
+            <div className="inline-flex gap-0.5 bg-white/10 p-0.5">
               <TabButton
                 active={activeTab === "itinerary"}
                 onClick={() => setActiveTab("itinerary")}
@@ -106,29 +111,25 @@ export function PreviewModal({ onClose, quoteId }: Props) {
           </div>
 
           <div className="flex items-center gap-1.5 pe-1">
-            {quoteId && (
-              <>
-                <button
-                  type="button"
-                  onClick={() => handleDownload("itinerary")}
-                  className="h-7 rounded-erp border border-white/25 bg-transparent px-2 text-[11px] font-medium text-chrome-sidebar-foreground hover:bg-chrome-sidebar-hover"
-                >
-                  일정표 Excel
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleDownload("cost")}
-                  className="h-7 rounded-erp border border-white/25 bg-transparent px-2 text-[11px] font-medium text-chrome-sidebar-foreground hover:bg-chrome-sidebar-hover"
-                >
-                  견적서 Excel
-                </button>
-              </>
-            )}
+            <button
+              type="button"
+              onClick={() => handleDownload("itinerary")}
+              className="hub-btn h-7 border-white/25 bg-transparent px-2 text-[13px] font-semibold text-chrome-sidebar-foreground hover:bg-chrome-sidebar-hover"
+            >
+              일정표 Excel
+            </button>
+            <button
+              type="button"
+              onClick={() => handleDownload("cost")}
+              className="hub-btn h-7 border-white/25 bg-transparent px-2 text-[13px] font-semibold text-chrome-sidebar-foreground hover:bg-chrome-sidebar-hover"
+            >
+              견적서 Excel
+            </button>
             <button
               type="button"
               onClick={onClose}
               aria-label="미리보기 닫기"
-              className="h-7 rounded-erp px-2 text-chrome-sidebar-foreground hover:bg-chrome-sidebar-hover"
+              className="hub-btn-text h-7 px-2 text-chrome-sidebar-foreground hover:bg-chrome-sidebar-hover"
             >
               ✕
             </button>
@@ -162,7 +163,7 @@ function TabButton({
     <button
       type="button"
       onClick={onClick}
-      className={`rounded-sm px-3 py-1 text-[11px] font-medium transition-colors ${
+      className={`px-3 py-1 text-[13px] font-semibold transition-colors ${
         active
           ? "bg-primary text-primary-foreground"
           : "text-white/85 hover:text-white"
@@ -202,20 +203,21 @@ function PreviewDocumentHeader({
 
   return (
     <section className="overflow-hidden bg-white">
-      <div className="grid grid-cols-[150px_1fr_180px] items-center">
+      <div className="grid grid-cols-[150px_1fr_220px] items-center">
         <div className="flex h-16 items-center justify-center p-2">
           <Image
             src="/images/hanatour-logo-cropped.png"
             alt="하나투어"
             width={120}
             height={27}
-            className="h-[27px] w-auto object-contain"
+            className="object-contain"
+            style={{ width: "134px", height: "auto" }}
           />
         </div>
-        <div className="px-3 py-2 text-center text-lg font-bold text-foreground">
+        <div className="px-3 py-2 text-center text-[22px] font-bold leading-7 text-foreground">
           {title}
         </div>
-        <div className="px-3 py-2 text-right text-[11px] text-foreground/80">
+        <div className="px-3 py-2 text-right text-[12.5px] leading-[18px] text-foreground/80">
           견적 작성일: {formatDateDot(today)}
         </div>
       </div>
@@ -257,7 +259,7 @@ function ItineraryPreview({ itinerary }: { itinerary: ItineraryData | null }) {
   if (!itinerary) {
     return (
       <div className="flex h-full items-center justify-center">
-        <p className="text-sm text-muted-foreground">일정 데이터가 없습니다.</p>
+        <p className="text-[12.5px] text-muted-foreground">일정 데이터가 없습니다.</p>
       </div>
     );
   }
@@ -275,13 +277,13 @@ function ItineraryPreview({ itinerary }: { itinerary: ItineraryData | null }) {
   const fareWithCard = formatMoney(overview.fare.totalWithCard);
 
   return (
-      <div className={`${PREVIEW_DOCUMENT_CLASS} text-sm`}>
+      <div className={PREVIEW_DOCUMENT_CLASS}>
       <PreviewDocumentHeader
         title={itinerary.header.groupName || overview.cities || "일정표"}
       />
 
-      <div className="overflow-x-auto rounded-lg border border-grid-border text-[11px]">
-        <table className={`${PREVIEW_WIDE_TABLE_CLASS} border-collapse`}>
+      <div className="overflow-x-auto rounded-lg border border-grid-border">
+        <table className={`${PREVIEW_WIDE_TABLE_CLASS} border border-grid-border border-collapse`}>
           <colgroup>
             <col className="w-[9%]" />
             <col className="w-[10.5%]" />
@@ -296,19 +298,19 @@ function ItineraryPreview({ itinerary }: { itinerary: ItineraryData | null }) {
           </colgroup>
           <tbody>
             <tr>
-              <th className="whitespace-nowrap border border-grid-border bg-grid-header px-2 py-1 text-center font-medium text-grid-header-foreground">
+              <th className="whitespace-nowrap border border-grid-border bg-grid-header px-2 py-1 text-center font-bold text-grid-header-foreground">
                 수신
               </th>
               <td className="border border-grid-border px-2 py-1" colSpan={3}>
                 {overview.recipient}
               </td>
-              <th className="whitespace-nowrap border border-grid-border bg-grid-header px-2 py-1 text-center font-medium text-grid-header-foreground">
+              <th className="whitespace-nowrap border border-grid-border bg-grid-header px-2 py-1 text-center font-bold text-grid-header-foreground">
                 여행도시
               </th>
               <td className="border border-grid-border px-2 py-1" colSpan={2}>
                 {overview.cities}
               </td>
-              <th className="whitespace-nowrap border border-grid-border bg-grid-header px-2 py-1 text-center font-medium text-grid-header-foreground">
+              <th className="whitespace-nowrap border border-grid-border bg-grid-header px-2 py-1 text-center font-bold text-grid-header-foreground">
                 여행기간
               </th>
               <td className="border border-grid-border px-2 py-1" colSpan={2}>
@@ -316,17 +318,21 @@ function ItineraryPreview({ itinerary }: { itinerary: ItineraryData | null }) {
               </td>
             </tr>
             <tr>
-              <th className="whitespace-nowrap border border-grid-border bg-grid-header px-2 py-1 text-center font-medium text-grid-header-foreground">
+              <th className="whitespace-nowrap border border-grid-border bg-grid-header px-2 py-1 text-center font-bold text-grid-header-foreground">
                 인원
               </th>
-              <td className="border border-grid-border px-2 py-1" colSpan={3}>
+              <td className="border border-grid-border px-2 py-1" colSpan={2}>
                 {formatPassenger(pax)}
               </td>
-              <th className="whitespace-nowrap border border-grid-border bg-grid-header px-2 py-1 text-center font-medium text-grid-header-foreground">
+              <th className="whitespace-nowrap border border-grid-border bg-grid-header px-2 py-1 text-center font-bold text-grid-header-foreground">
                 인솔자
               </th>
-              <td className="border border-grid-border px-2 py-1" colSpan={2}>{pax.escort}명</td>
-              <th className="whitespace-nowrap border border-grid-border bg-grid-header px-2 py-1 text-center font-medium text-grid-header-foreground">
+              <td className="border border-grid-border px-2 py-1">{pax.escort}명</td>
+              <th className="whitespace-nowrap border border-grid-border bg-grid-header px-2 py-1 text-center font-bold text-grid-header-foreground">
+                FOC
+              </th>
+              <td className="border border-grid-border px-2 py-1">{pax.foc ?? 0}명</td>
+              <th className="whitespace-nowrap border border-grid-border bg-grid-header px-2 py-1 text-center font-bold text-grid-header-foreground">
                 1인실 이용금액
               </th>
               <td className="border border-grid-border px-2 py-1" colSpan={2}>
@@ -335,24 +341,24 @@ function ItineraryPreview({ itinerary }: { itinerary: ItineraryData | null }) {
             </tr>
             <tr>
               <th
-                className="whitespace-nowrap border border-grid-border border-l-0 bg-grid-header px-2 py-1 text-center font-medium text-grid-header-foreground"
+                className="whitespace-nowrap border border-grid-border bg-grid-header px-2 py-1 text-center font-bold text-grid-header-foreground"
                 rowSpan={2}
               >
                 여행 요금
               </th>
-              <th className="whitespace-nowrap border border-grid-border bg-grid-header px-2 py-1 text-center font-medium text-grid-header-foreground">
+              <th className="whitespace-nowrap border border-grid-border bg-grid-header px-2 py-1 text-center font-bold text-grid-header-foreground">
                 성인 인당
               </th>
-              <th className="whitespace-nowrap border border-grid-border bg-grid-header px-2 py-1 text-center font-medium text-grid-header-foreground">
+              <th className="whitespace-nowrap border border-grid-border bg-grid-header px-2 py-1 text-center font-bold text-grid-header-foreground">
                 아동 인당
               </th>
-              <th className="whitespace-nowrap border border-grid-border bg-grid-header px-2 py-1 text-center font-medium text-grid-header-foreground">
+              <th className="whitespace-nowrap border border-grid-border bg-grid-header px-2 py-1 text-center font-bold text-grid-header-foreground">
                 유아 인당
               </th>
-              <th className="whitespace-nowrap border border-grid-border bg-grid-header px-2 py-1 text-center font-medium text-grid-header-foreground" colSpan={3}>
+              <th className="whitespace-nowrap border border-grid-border bg-grid-header px-2 py-1 text-center font-bold text-grid-header-foreground" colSpan={3}>
                 총 금액
               </th>
-              <th className="whitespace-nowrap border border-grid-border bg-grid-header px-2 py-1 text-center font-medium text-grid-header-foreground" colSpan={3}>
+              <th className="whitespace-nowrap border border-grid-border bg-grid-header px-2 py-1 text-center font-bold text-grid-header-foreground" colSpan={3}>
                 카드 결제 시 금액
               </th>
             </tr>
@@ -363,37 +369,37 @@ function ItineraryPreview({ itinerary }: { itinerary: ItineraryData | null }) {
               <td className="border border-grid-border px-2 py-1 text-right" colSpan={3}>
                 {fareTotal}
               </td>
-              <td className="border border-grid-border border-r-0 px-2 py-1 text-right" colSpan={3}>
+              <td className="border border-grid-border px-2 py-1 text-right" colSpan={3}>
                 {fareWithCard}
               </td>
             </tr>
             <tr>
               <td
-                className="h-[6px] border border-grid-border border-l-0 border-r-0 bg-white px-0 py-0"
+                className="h-[6px] border border-grid-border bg-white px-0 py-0"
                 colSpan={10}
               />
             </tr>
             <tr>
-              <th className="whitespace-nowrap border border-grid-border border-l-0 bg-grid-header px-2 py-1 text-center font-medium text-grid-header-foreground">
+              <th className="whitespace-nowrap border border-grid-border bg-grid-header px-2 py-1 text-center font-bold text-grid-header-foreground">
                 구분
               </th>
-              <th className="whitespace-nowrap border border-grid-border bg-grid-header px-2 py-1 text-center font-medium text-grid-header-foreground" colSpan={7}>
+              <th className="whitespace-nowrap border border-grid-border bg-grid-header px-2 py-1 text-center font-bold text-grid-header-foreground" colSpan={7}>
                 내용
               </th>
-              <th className="whitespace-nowrap border border-grid-border border-r-0 bg-grid-header px-2 py-1 text-center font-medium text-grid-header-foreground" colSpan={2}>
+              <th className="whitespace-nowrap border border-grid-border bg-grid-header px-2 py-1 text-center font-bold text-grid-header-foreground" colSpan={2}>
                 비고
               </th>
             </tr>
             {summaryRows.map(([label, detail, note]) => (
               <tr key={label}>
-                <td className="border border-grid-border bg-muted px-2 py-1 text-center align-top font-medium">
+                <td className="border border-grid-border bg-muted px-2 py-1 text-center align-top font-bold">
                   {label}
                 </td>
                 <td className="border border-grid-border px-2 py-1" colSpan={7}>
                   <div className="whitespace-pre-wrap">{detail || ""}</div>
                 </td>
                 <td className="border border-grid-border px-2 py-1" colSpan={2}>
-                  {note || ""}
+                  <div className="whitespace-pre-wrap">{note || ""}</div>
                 </td>
               </tr>
             ))}
@@ -413,12 +419,12 @@ function ItineraryPreview({ itinerary }: { itinerary: ItineraryData | null }) {
           </colgroup>
           <thead className="whitespace-nowrap bg-grid-header text-grid-header-foreground">
             <tr>
-              <th className="px-3 py-2 text-center">일자</th>
-              <th className="px-3 py-2 text-center">지역</th>
-              <th className="px-3 py-2 text-center">교통편</th>
-              <th className="px-3 py-2 text-center">시간</th>
-              <th className="px-3 py-2 text-center">세부일정</th>
-              <th className="px-3 py-2 text-center">식사</th>
+              <th className="px-3 py-2 text-center font-bold">일차</th>
+              <th className="px-3 py-2 text-center font-bold">지역</th>
+              <th className="px-3 py-2 text-center font-bold">교통편</th>
+              <th className="px-3 py-2 text-center font-bold">시간</th>
+              <th className="px-3 py-2 text-center font-bold">세부일정</th>
+              <th className="px-3 py-2 text-center font-bold">식사</th>
             </tr>
           </thead>
           <tbody>
@@ -443,7 +449,9 @@ function ItineraryPreview({ itinerary }: { itinerary: ItineraryData | null }) {
                           className="whitespace-pre-wrap border-r border-grid-border px-3 py-2 align-middle text-center text-foreground bg-white"
                         >
                           <div className="whitespace-nowrap">
-                            <span className="font-medium">{day.dayLabel.split("\n")[0]}</span>
+                            <span className="font-bold">
+                              {day.dayLabel.split("\n")[0]?.replace(/\s+일$/u, "일")}
+                            </span>
                             <br />
                             {day.dayLabel.split("\n")[1]}
                             <br />
@@ -486,7 +494,7 @@ function ItineraryPreview({ itinerary }: { itinerary: ItineraryData | null }) {
         </table>
       </div>
 
-      <div className="space-y-4 pt-2 text-center text-xs text-foreground">
+      <div className="space-y-4 pt-2 text-center text-[12.5px] leading-[18px] text-foreground">
         <p>상기 일정은 항공 및 현지 사정에 의해 다소 변경될 수 있습니다.</p>
         <p>{formatDateKor(getTodayDateString())}</p>
         <p className="font-bold">(주) 하나투어</p>
@@ -513,8 +521,8 @@ function renderDetailText(value: string, description = "", isHotel = false): Rea
 
   if (isHotel) {
     if (hotelMatch) {
-      const label = hotelMatch[1] ?? "";
-      const hotelDetail = (hotelMatch[2] ?? "").trim();
+      const label = hotelMatch[1] ?? hotelMatch[2] ?? "숙박";
+      const hotelDetail = (hotelMatch[3] ?? "").trim();
       return (
         <span>
           <span className="font-bold">{label}</span>
@@ -542,8 +550,8 @@ function renderDetailText(value: string, description = "", isHotel = false): Rea
     );
   }
 
-  const label = hotelMatch[1] ?? "";
-  const hotelDetail = (hotelMatch[2] ?? "").trim();
+  const label = hotelMatch[1] ?? hotelMatch[2] ?? "";
+  const hotelDetail = (hotelMatch[3] ?? "").trim();
   return (
     <span>
       <span className="font-bold">{label}</span>
@@ -579,7 +587,7 @@ function renderMealText(value: string): React.ReactNode {
 
         return (
           <span key={line + index}>
-            <span className="font-medium">{label}</span>
+            <span className="font-bold">{label}</span>
             {detail ? ` ${detail}` : ""}
             {index < lines.length - 1 ? <br /> : null}
           </span>
@@ -647,7 +655,7 @@ function QuotePreview({ quote }: { quote: QuoteData | null }) {
   if (!quote) {
     return (
       <div className="flex h-full items-center justify-center">
-        <p className="text-sm text-muted-foreground">견적 데이터가 없습니다.</p>
+        <p className="text-[12.5px] text-muted-foreground">견적 데이터가 없습니다.</p>
       </div>
     );
   }
@@ -685,14 +693,14 @@ function QuotePreview({ quote }: { quote: QuoteData | null }) {
           </colgroup>
           <thead className="whitespace-nowrap bg-grid-header text-grid-header-foreground">
             <tr>
-              <th className="px-3 py-2 text-center font-medium">항목</th>
-              <th className="px-3 py-2 text-center font-medium">지역</th>
-              <th className="px-3 py-2 text-center font-medium">날짜</th>
-              <th className="px-3 py-2 text-center font-medium">상세내역</th>
-              <th className="px-3 py-2 text-center font-medium">인원/개수</th>
-              <th className="px-3 py-2 text-center font-medium">단가</th>
-              <th className="px-3 py-2 text-center font-medium">합계(원)</th>
-              <th className="px-3 py-2 text-center font-medium">건별합계</th>
+              <th className="px-3 py-2 text-center font-bold">항목</th>
+              <th className="px-3 py-2 text-center font-bold">지역</th>
+              <th className="px-3 py-2 text-center font-bold">날짜</th>
+              <th className="px-3 py-2 text-center font-bold">상세내역</th>
+              <th className="px-3 py-2 text-center font-bold">인원/개수</th>
+              <th className="px-3 py-2 text-center font-bold">단가</th>
+              <th className="px-3 py-2 text-center font-bold">합계(원)</th>
+              <th className="px-3 py-2 text-center font-bold">건별합계</th>
             </tr>
           </thead>
           <tbody>
@@ -789,11 +797,11 @@ function QuotePreview({ quote }: { quote: QuoteData | null }) {
         </table>
       </div>
 
-      <p className="pt-1 text-right text-xs font-medium text-foreground">
+      <p className="pt-1 text-right text-[12.5px] font-medium leading-[18px] text-foreground">
         이 견적은 {formatDateKor(validUntil)} 까지만 유효합니다
       </p>
 
-      <div className="pt-4 text-left text-xs leading-5 text-foreground">
+      <div className="pt-4 text-left text-[12.5px] leading-[18px] text-foreground">
         <p>(주)하나투어</p>
         <p>서울시 종로구 인사동 5길 41</p>
         <p>TEL: 1577-1233 | FAX: 02-1234-5678</p>

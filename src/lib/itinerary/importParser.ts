@@ -1,6 +1,6 @@
 import * as ExcelJS from "exceljs";
 import { v4 as uuidv4 } from "uuid";
-import type { DaySchedule, ItineraryData, ScheduleItem, ScheduleItemType } from "@/types";
+import type { DaySchedule, ItineraryData, MealSlot, ScheduleItem, ScheduleItemType } from "@/types";
 import { mapMcpProductToItinerary } from "@/lib/mcp/mapSaleProductToItinerary";
 import { enforceAccommodationPolicy } from "@/lib/itinerary/policy";
 import {
@@ -48,8 +48,12 @@ function asDate(value: unknown): string {
 
   const shortMonthDay = /^(\d{1,2})-(\d{1,2})$/u.exec(compact);
   if (shortMonthDay?.[1] && shortMonthDay[2]) {
-    const year = currentYearInKorea();
-    return `${year}-${shortMonthDay[1].padStart(2, "0")}-${shortMonthDay[2].padStart(2, "0")}`;
+    const mo = Number(shortMonthDay[1]);
+    const d = Number(shortMonthDay[2]);
+    if (mo >= 1 && mo <= 12 && d >= 1 && d <= 31) {
+      const year = currentYearInKorea();
+      return `${year}-${shortMonthDay[1].padStart(2, "0")}-${shortMonthDay[2].padStart(2, "0")}`;
+    }
   }
 
   const digitsOnly = compact.replace(/[^0-9]/g, "");
@@ -117,7 +121,13 @@ function normalizeItemType(content: string): ScheduleItemType {
   return "OTHER";
 }
 
-function buildLineItem(content: string, dayNo: number, seq: number, detail?: string): ScheduleItem {
+function inferMealSlot(content: string): MealSlot {
+  if (/(중식|런치|lunch)/iu.test(content)) return "lunch";
+  if (/(석식|저녁|디너|dinner)/iu.test(content)) return "dinner";
+  return "breakfast";
+}
+
+function buildLineItem(content: string, _dayNo: number, _seq: number, detail?: string): ScheduleItem {
   const split = detail ? { content, detail } : splitStructuredScheduleContent(content);
   const itemType = normalizeItemType(split.content);
   return {
@@ -125,8 +135,7 @@ function buildLineItem(content: string, dayNo: number, seq: number, detail?: str
     type: itemType,
     content: split.content,
     ...(split.detail ? { detail: split.detail } : {}),
-    ...(itemType === "MEAL" ? { mealSlot: "breakfast" } : {}),
-    ...(seq % 2 === 0 ? {} : {}),
+    ...(itemType === "MEAL" ? { mealSlot: inferMealSlot(split.content) } : {}),
     time: "",
     region: "",
   };
@@ -159,6 +168,7 @@ function buildBlankFallback(name?: string): ItineraryData {
         child: 0,
         infant: 0,
         escort: 0,
+        foc: 0,
       },
       fare: {
         adultPerPerson: 0,
@@ -444,11 +454,11 @@ async function parseSpreadsheet(file: File): Promise<ItineraryData> {
 }
 
 export async function parseItineraryTextFile(file: File): Promise<ItineraryData> {
-  const fileName = file.name.toLowerCase();
-  const isJson = fileName.endsWith(".json");
-  const isExcel = fileName.endsWith(".xls") || fileName.endsWith(".xlsx");
-  const isTxt = fileName.endsWith(".txt");
-  const isCsv = fileName.endsWith(".csv");
+  const ext = file.name.toLowerCase().split(".").pop() ?? "";
+  const isJson = ext === "json";
+  const isExcel = ext === "xls" || ext === "xlsx";
+  const isTxt = ext === "txt";
+  const isCsv = ext === "csv";
 
   if (isJson) {
     const raw = await file.text();

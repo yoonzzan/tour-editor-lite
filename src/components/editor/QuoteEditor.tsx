@@ -7,7 +7,7 @@
 // T-406: 총 경비 섹션 (합계 + 수수료 + VAT + TOTAL)
 // T-409: 가격 표시 방식 드롭다운 (sales 전용)
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { v4 as uuidv4 } from "uuid";
 import { useEditorStore } from "@/hooks/useEditorStore";
 import {
@@ -43,10 +43,59 @@ function normalizeNumberInputValue(value: string): string {
   return value.replace(/^0+(?=\d)/u, "");
 }
 
-function readNonNegativeInput(input: HTMLInputElement): number {
-  const normalized = normalizeNumberInputValue(input.value);
-  input.value = normalized;
+function parseNonNegativeInteger(value: string): number {
+  const normalized = normalizeNumberInputValue(value.replace(/[^\d]/gu, ""));
   return Math.max(0, Number(normalized));
+}
+
+function formatIntegerInputValue(value: number): string {
+  if (!Number.isFinite(value)) return "0";
+  return Math.max(0, Math.trunc(value)).toLocaleString();
+}
+
+function readNonNegativeInput(input: HTMLInputElement): number {
+  const nextValue = parseNonNegativeInteger(input.value);
+  input.value = formatIntegerInputValue(nextValue);
+  return nextValue;
+}
+
+function AutoResizeTextarea({
+  value,
+  onChange,
+  placeholder,
+  ariaLabel,
+  className = "hub-textarea w-full overflow-hidden",
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  ariaLabel: string;
+  className?: string;
+}) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.style.height = "auto";
+    if (value.trim().length === 0) {
+      textarea.style.height = "var(--hub-control-height)";
+      return;
+    }
+    textarea.style.height = `${textarea.scrollHeight}px`;
+  }, [value]);
+
+  return (
+    <textarea
+      ref={textareaRef}
+      rows={1}
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      placeholder={placeholder}
+      aria-label={ariaLabel}
+      className={className}
+    />
+  );
 }
 
 interface Props {
@@ -226,27 +275,16 @@ export function QuoteEditor({ role }: Props) {
   return (
     <div className="flex w-full flex-col gap-4 pb-16">
       {/* ── 헤더 (T-402) ─────────────────────────────── */}
-      <div className="flex items-center justify-between rounded-lg border border-border bg-card px-4 py-3">
-        <h2 className="text-sm font-semibold text-foreground">견적서 에디터</h2>
+      <div className="flex items-center justify-between hub-section-head">
+        <h2 className="text-[13px] font-semibold text-foreground">견적서 에디터</h2>
         <div className="flex items-center gap-2">
-          <label className="flex items-center gap-1.5 text-xs font-semibold text-red-600">
-            유효기간
-            <input
-              type="date"
-              value={validUntil}
-              onChange={(e) => handleValidUntilChange(e.target.value)}
-              aria-label="유효기간"
-              className="rounded border border-input bg-background px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
-            />
-          </label>
-
           {/* T-409: sales 전용 가격 표시 방식 */}
           {isSales && (
             <select
               aria-label="가격 표시 방식"
               value={priceMode}
               onChange={(e) => setPriceMode(e.target.value as PriceMode)}
-              className="rounded border border-input bg-background px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+              className="hub-input focus:outline-none focus:ring-1 focus:ring-ring"
             >
               <option value="상세">상세</option>
               <option value="총액">총액</option>
@@ -258,7 +296,7 @@ export function QuoteEditor({ role }: Props) {
           {itinerary && (
             <button
               onClick={handleAutoGenerate}
-              className="rounded-md border border-dashed border-border px-3 py-1.5 text-xs text-muted-foreground hover:border-primary hover:text-primary"
+              className="hub-btn hub-btn-custom"
             >
               일정에서 자동 생성
             </button>
@@ -266,16 +304,35 @@ export function QuoteEditor({ role }: Props) {
         </div>
       </div>
 
+      <section className="hub-section p-3">
+        <div className="flex items-center gap-2">
+          <label
+            htmlFor="quote-valid-until"
+            className="whitespace-nowrap text-[11.5px] font-semibold text-red-600"
+          >
+            유효기간
+          </label>
+          <input
+            id="quote-valid-until"
+            type="date"
+            value={validUntil}
+            onChange={(e) => handleValidUntilChange(e.target.value)}
+            aria-label="유효기간"
+            className="hub-input w-36 text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+          />
+        </div>
+      </section>
+
       {showPrices && (
-        <section className="rounded-lg border border-border bg-card p-4">
+        <section className="hub-section p-3">
           <div className="mb-3 flex items-center justify-between gap-3">
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            <h3 className="hub-section-title">
               환율 설정
             </h3>
             <button
               type="button"
               onClick={handleAddRate}
-              className="rounded-md border border-dashed border-border px-2.5 py-1 text-xs text-muted-foreground hover:border-primary hover:text-primary"
+              className="hub-btn hub-btn-custom"
             >
               + 통화
             </button>
@@ -286,7 +343,7 @@ export function QuoteEditor({ role }: Props) {
               return (
                 <div
                   key={rate.id}
-                  className="grid grid-cols-[auto_4.5rem_auto_1fr_auto] items-center gap-2 text-xs"
+                  className="grid grid-cols-[auto_4.5rem_auto_1fr_auto] items-center gap-2 text-[12.5px]"
                 >
                   <span className="text-muted-foreground">1</span>
                   <input
@@ -300,15 +357,13 @@ export function QuoteEditor({ role }: Props) {
                       })
                     }
                     aria-label="통화코드"
-                    className="rounded border border-input bg-transparent px-2 py-1 text-xs font-medium focus:outline-none focus:ring-1 focus:ring-ring disabled:bg-muted/40"
+                    className="hub-input font-medium disabled:bg-muted/40"
                   />
                   <span className="text-muted-foreground">=</span>
                   <input
-                    type="number"
-                    min={0}
-                    step={1}
-                    inputMode="decimal"
-                    value={rate.rateToKrw}
+                    type="text"
+                    inputMode="numeric"
+                    value={formatIntegerInputValue(rate.rateToKrw)}
                     disabled={isDefault}
                     onChange={(e) =>
                       handleRateChange({
@@ -317,7 +372,7 @@ export function QuoteEditor({ role }: Props) {
                       })
                     }
                     aria-label={`${rate.code} 원화 환율`}
-                    className="rounded border border-input bg-transparent px-2 py-1 text-right text-xs focus:outline-none focus:ring-1 focus:ring-ring disabled:bg-muted/40"
+                    className="hub-input text-right disabled:bg-muted/40"
                   />
                   <div className="flex items-center gap-1">
                     <span className="text-muted-foreground">원</span>
@@ -326,7 +381,7 @@ export function QuoteEditor({ role }: Props) {
                         type="button"
                         onClick={() => handleRemoveRate(rate.id)}
                         aria-label={`${rate.code} 환율 삭제`}
-                        className="rounded px-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                        className="hub-btn-text px-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                       >
                         ✕
                       </button>
@@ -341,19 +396,19 @@ export function QuoteEditor({ role }: Props) {
 
       {/* ── 빈 상태 안내 ──────────────────────────────── */}
       {localItems.length === 0 && (
-        <div className="flex flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-border py-12 text-center">
-          <p className="text-sm text-muted-foreground">
+        <div className="hub-section flex flex-col items-center justify-center gap-3 border-dashed py-12 text-center">
+          <p className="text-[12.5px] text-muted-foreground">
             견적 항목이 없습니다.
           </p>
           {itinerary ? (
             <button
               onClick={handleAutoGenerate}
-              className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
+              className="hub-btn hub-btn-primary"
             >
               일정표에서 자동 생성
             </button>
           ) : (
-            <p className="text-xs text-muted-foreground">
+            <p className="text-[12.5px] text-muted-foreground">
               먼저 일정표 탭에서 일정을 불러오세요.
             </p>
           )}
@@ -362,16 +417,16 @@ export function QuoteEditor({ role }: Props) {
 
       {/* ── 구분별 테이블 (T-403, T-404, T-405) ─────── */}
       {grouped.map(({ category, items, subtotal: catSubtotal }) => (
-        <section key={category} className="rounded-lg border border-border bg-card overflow-hidden">
+        <section key={category} className="hub-section overflow-hidden">
           {/* 구분 헤더 */}
-          <div className="flex items-center justify-between border-b border-border bg-muted/30 px-4 py-2">
+          <div className="hub-section-head">
             <span
-              className={`rounded px-2 py-0.5 text-xs font-semibold ${CATEGORY_COLORS[category]}`}
+              className={`rounded px-2 py-0.5 text-[11.5px] font-semibold ${CATEGORY_COLORS[category]}`}
             >
               {CATEGORY_LABELS[category]}
             </span>
             {showPrices && (
-              <span className="text-xs font-medium text-foreground">
+              <span className="text-[12.5px] font-medium text-foreground">
                 소계: {catSubtotal.toLocaleString()} 원
               </span>
             )}
@@ -379,7 +434,7 @@ export function QuoteEditor({ role }: Props) {
 
           {/* 행 목록 */}
           <div className="overflow-x-auto">
-            <table className="w-full text-xs">
+            <table className="hub-grid">
               <thead>
                 <tr className="border-b border-border text-muted-foreground">
                   <th className="px-3 py-2 text-center font-medium w-24">날짜</th>
@@ -392,7 +447,6 @@ export function QuoteEditor({ role }: Props) {
                       <th className="px-3 py-2 text-center font-medium w-28">합계 (원)</th>
                     </>
                   )}
-                  <th className="px-3 py-2 w-8"></th>
                 </tr>
               </thead>
               <tbody>
@@ -415,7 +469,7 @@ export function QuoteEditor({ role }: Props) {
           <div className="border-t border-border px-3 py-1.5">
             <button
               onClick={() => handleAddRow(category)}
-              className="text-xs text-muted-foreground hover:text-primary"
+              className="hub-btn hub-btn-text"
             >
               + {CATEGORY_LABELS[category]} 행 추가
             </button>
@@ -430,7 +484,7 @@ export function QuoteEditor({ role }: Props) {
             <button
               key={cat}
               onClick={() => handleAddRow(cat)}
-              className="rounded-md border border-dashed border-border px-2.5 py-1 text-xs text-muted-foreground hover:border-primary hover:text-primary"
+              className="hub-btn hub-btn-custom"
             >
               + {CATEGORY_LABELS[cat]}
             </button>
@@ -440,17 +494,17 @@ export function QuoteEditor({ role }: Props) {
 
       {/* ── 총 경비 섹션 (T-406) ─────────────────────── */}
       {localItems.length > 0 && (
-        <section className="rounded-lg border border-border bg-card p-4">
-          <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        <section className="hub-section p-3">
+          <h3 className="mb-3 hub-section-title">
             총 경비
           </h3>
 
           {priceMode === "숨김" ? (
-            <p className="text-xs text-muted-foreground">가격이 숨겨진 상태입니다.</p>
+            <p className="text-[12.5px] text-muted-foreground">가격이 숨겨진 상태입니다.</p>
           ) : priceMode === "총액" ? (
-            <div className="flex items-center justify-between rounded-md bg-muted/40 px-4 py-3">
-              <span className="text-sm font-semibold text-foreground">총액</span>
-              <span className="text-sm font-bold text-primary">
+            <div className="flex items-center justify-between border border-grid-border bg-[hsl(var(--hub-cyan-soft))] px-4 py-3">
+              <span className="text-[12.5px] font-semibold text-foreground">총액</span>
+              <span className="text-[12.5px] font-bold text-primary">
                 {total.toLocaleString()} 원
               </span>
             </div>
@@ -458,23 +512,21 @@ export function QuoteEditor({ role }: Props) {
             <div className="flex flex-col gap-2">
               <SummaryRow label="항목소계" value={grandSubtotal} />
               {(isPartner || groundProfit > 0) && (
-                <div className="grid grid-cols-[8rem_1fr] items-center gap-3 px-3 py-1 text-sm">
+                <div className="grid grid-cols-[8rem_1fr] items-center gap-3 px-3 py-1 text-[12.5px]">
                   <label className="text-muted-foreground">
                     지상비수익
                   </label>
                   <div className="flex flex-wrap items-center justify-end gap-2">
                     {isPartner ? (
                       <input
-                        type="number"
-                        min={0}
-                        step={1000}
+                        type="text"
                         inputMode="numeric"
-                        value={groundProfit}
+                        value={formatIntegerInputValue(groundProfit)}
                         onChange={(e) =>
                           handleGroundProfitChange(readNonNegativeInput(e.currentTarget))
                         }
                         aria-label="지상비수익"
-                        className="w-36 rounded border border-input bg-transparent px-2 py-0.5 text-right text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                        className="hub-input w-36 text-right"
                       />
                     ) : (
                       <span className="w-36 text-right font-medium text-foreground">
@@ -482,39 +534,37 @@ export function QuoteEditor({ role }: Props) {
                       </span>
                     )}
                     <span className="text-muted-foreground">원</span>
-                    <span className="text-xs text-muted-foreground">
+                    <span className="text-[11.5px] text-muted-foreground">
                       1인당 {groundProfitPerPerson.toLocaleString()} 원
                     </span>
                   </div>
                 </div>
               )}
-              <div className="grid grid-cols-[8rem_1fr] items-center gap-3 px-3 py-1 text-sm">
+              <div className="grid grid-cols-[8rem_1fr] items-center gap-3 px-3 py-1 text-[12.5px]">
                 <label className="text-muted-foreground">
                   하나투어수익
                 </label>
                 <div className="flex flex-wrap items-center justify-end gap-2">
                   <input
-                    type="number"
-                    min={0}
-                    step={1000}
+                    type="text"
                     inputMode="numeric"
-                    value={agencyFee}
+                    value={formatIntegerInputValue(agencyFee)}
                     onChange={(e) =>
                       handleFeeChange(readNonNegativeInput(e.currentTarget))
                     }
                     aria-label="하나투어수익"
-                    className="w-36 rounded border border-input bg-transparent px-2 py-0.5 text-right text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                    className="hub-input w-36 text-right"
                   />
                   <span className="text-muted-foreground">원</span>
-                  <span className="text-xs text-muted-foreground">
+                  <span className="text-[11.5px] text-muted-foreground">
                     1인당 {agencyFeePerPerson.toLocaleString()} 원
                   </span>
                 </div>
               </div>
               <SummaryRow label="VAT" value={vat} />
-              <div className="mt-1 grid grid-cols-[8rem_1fr] items-center rounded-md bg-primary/10 px-3 py-2">
-                <span className="text-sm font-semibold text-foreground">TOTAL</span>
-                <span className="text-right text-sm font-bold text-primary">
+              <div className="mt-1 grid grid-cols-[8rem_1fr] items-center border border-primary/20 bg-primary/10 px-3 py-2">
+                <span className="text-[12.5px] font-semibold text-foreground">TOTAL</span>
+                <span className="text-right text-[12.5px] font-bold text-primary">
                   {total.toLocaleString()} 원
                 </span>
               </div>
@@ -537,7 +587,13 @@ interface QuoteRowProps {
   onRemove: () => void;
 }
 
-function QuoteRow({ item, exchangeRates, showPrices, onChange, onRemove }: QuoteRowProps) {
+function QuoteRow({
+  item,
+  exchangeRates,
+  showPrices,
+  onChange,
+  onRemove,
+}: QuoteRowProps) {
   const selectedRate = getExchangeRateForItem(exchangeRates, item);
   return (
     <tr className="border-b border-border last:border-0 hover:bg-muted/20">
@@ -547,7 +603,7 @@ function QuoteRow({ item, exchangeRates, showPrices, onChange, onRemove }: Quote
           value={item.date}
           onChange={(e) => onChange({ id: item.id, date: e.target.value })}
           aria-label="날짜"
-          className="w-full rounded border border-input bg-transparent px-1 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+          className="w-full hub-input"
         />
       </td>
       <td className="px-3 py-1.5">
@@ -557,49 +613,47 @@ function QuoteRow({ item, exchangeRates, showPrices, onChange, onRemove }: Quote
           onChange={(e) => onChange({ id: item.id, region: e.target.value })}
           placeholder="지역"
           aria-label="지역"
-          className="w-full rounded border border-input bg-transparent px-1 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+          className="w-full hub-input"
         />
       </td>
-          <td className="px-3 py-1.5">
-            <input
-              type="text"
-              value={item.description}
-          onChange={(e) =>
-            onChange({ id: item.id, description: e.target.value })
-          }
-          placeholder="내용"
-          aria-label="내용"
-          className="w-full rounded border border-input bg-transparent px-1 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
-        />
+      <td className="px-3 py-1.5">
+        <div className="relative">
+          <AutoResizeTextarea
+            value={item.description}
+            onChange={(value) => onChange({ id: item.id, description: value })}
+            placeholder="내용"
+            ariaLabel="내용"
+            className={`hub-textarea w-full overflow-hidden${showPrices ? "" : " pr-8"}`}
+          />
+          {!showPrices && <RemoveRowButton onRemove={onRemove} />}
+        </div>
       </td>
       {showPrices && (
         <>
           <td className="px-3 py-1.5">
-              <input
-                type="number"
-                min={1}
-                step={1}
-                inputMode="numeric"
-                value={item.quantity}
-                onChange={(e) =>
-                  onChange({
-                    id: item.id,
+            <input
+              type="text"
+              inputMode="numeric"
+              value={formatIntegerInputValue(item.quantity)}
+              onChange={(e) =>
+                onChange({
+                  id: item.id,
                   quantity: Math.max(1, readNonNegativeInput(e.currentTarget)),
                 })
               }
               aria-label="수량"
-              className="w-full rounded border border-input bg-transparent px-1 py-0.5 text-right text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+              className="w-full hub-input text-right"
             />
           </td>
           <td className="relative px-3 py-1.5 w-44">
-            <div className="flex items-center rounded border border-input bg-transparent focus-within:ring-1 focus-within:ring-ring">
+            <div className="flex h-[31px] items-center border border-input bg-white focus-within:ring-1 focus-within:ring-ring">
               <select
                 value={selectedRate.id}
                 onChange={(e) =>
                   onChange({ id: item.id, currencyRateId: e.target.value })
                 }
                 aria-label="단가 통화"
-                className="w-14 border-r border-input bg-transparent px-1 py-0.5 text-xs text-muted-foreground focus:outline-none"
+                className="h-full w-14 border-r border-input bg-transparent px-1 text-[12.5px] text-muted-foreground focus:outline-none"
               >
                 {exchangeRates.map((rate) => (
                   <option key={rate.id} value={rate.id}>
@@ -608,11 +662,9 @@ function QuoteRow({ item, exchangeRates, showPrices, onChange, onRemove }: Quote
                 ))}
               </select>
               <input
-                type="number"
-                min={0}
-                step={1000}
+                type="text"
                 inputMode="numeric"
-                value={item.unitPrice}
+                value={formatIntegerInputValue(item.unitPrice)}
                 onChange={(e) =>
                   onChange({
                     id: item.id,
@@ -620,33 +672,48 @@ function QuoteRow({ item, exchangeRates, showPrices, onChange, onRemove }: Quote
                   })
                 }
                 aria-label="단가"
-                className="w-full min-w-0 bg-transparent px-1 py-0.5 text-right text-xs focus:outline-none"
+                className="h-full w-full min-w-0 bg-transparent px-1 text-right text-[12.5px] focus:outline-none"
               />
             </div>
           </td>
           <td className="px-3 py-1.5 text-right font-medium text-foreground">
-            {item.subtotal.toLocaleString()} 원
+            <div className="flex items-center justify-end gap-1.5">
+              <span className="min-w-0 whitespace-nowrap">
+                {item.subtotal.toLocaleString()} 원
+              </span>
+              <RemoveRowButton onRemove={onRemove} className="shrink-0" />
+            </div>
           </td>
         </>
       )}
-      <td className="px-3 py-1.5 text-center">
-        <button
-          onClick={onRemove}
-          aria-label="행 삭제"
-          className="rounded p-0.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-        >
-          ✕
-        </button>
-      </td>
     </tr>
   );
 }
 
 // ── 합계 행 ─────────────────────────────────────────────
 
+function RemoveRowButton({
+  onRemove,
+  className = "absolute right-1 top-1/2 -translate-y-1/2",
+}: {
+  onRemove: () => void;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onRemove}
+      aria-label="행 삭제"
+      className={`hub-btn-text px-1 text-muted-foreground/70 hover:bg-destructive/10 hover:text-destructive focus-visible:bg-destructive/10 focus-visible:text-destructive ${className}`}
+    >
+      ✕
+    </button>
+  );
+}
+
 function SummaryRow({ label, value }: { label: string; value: number }) {
   return (
-    <div className="grid grid-cols-[8rem_1fr] items-center gap-3 px-3 py-1 text-sm">
+    <div className="grid grid-cols-[8rem_1fr] items-center gap-3 px-3 py-1 text-[12.5px]">
       <span className="text-muted-foreground">{label}</span>
       <span className="text-right font-medium text-foreground">{value.toLocaleString()} 원</span>
     </div>

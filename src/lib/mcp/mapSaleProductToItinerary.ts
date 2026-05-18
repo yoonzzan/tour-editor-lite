@@ -84,6 +84,19 @@ function sanitizeText(value: unknown): string {
     ?.trim() ?? "";
 }
 
+function sanitizeMultilineText(value: unknown): string {
+  return asString(value)
+    ?.replace(/<br\s*\/?>/giu, "\n")
+    ?.replace(/<[^>]*>/g, " ")
+    ?.replace(/\r\n/g, "\n")
+    ?.replace(/&nbsp;/g, " ")
+    ?.replace(/[ \t\f\v]+/g, " ")
+    ?.replace(/\n[ \t\f\v]+/g, "\n")
+    ?.replace(/[ \t\f\v]+\n/g, "\n")
+    ?.replace(/\n{3,}/g, "\n\n")
+    ?.trim() ?? "";
+}
+
 function shortText(value: unknown, max = 220): string {
   const text = sanitizeText(value);
   if (!text) return "";
@@ -109,6 +122,68 @@ function nonFlagText(value: string | undefined): string {
   const text = asString(value);
   if (!text) return "";
   return /^[YN]$/iu.test(text) ? "" : text;
+}
+
+function stripTravelExpenseCategory(value: string): string {
+  return value.replace(/^\s*\[[^\]]+\]\s*[:：]?\s*/u, "").trim();
+}
+
+function travelExpenseDescription(entry: unknown): string {
+  if (!isRecord(entry)) {
+    return shortText(stripTravelExpenseCategory(asString(entry) ?? ""));
+  }
+
+  const desc = pickFirstString(entry, ["trvlExpnDesc", "desc", "description", "name", "title"]);
+  return shortText(stripTravelExpenseCategory(desc ?? ""));
+}
+
+function normalizeHotelName(value: unknown): string {
+  return sanitizeText(value)
+    .replace(/\s*(?:숙박|투숙)\s*$/u, "")
+    .trim();
+}
+
+function normalizeHotelGrade(value: unknown): string {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return `${value}성급`;
+  }
+
+  const text = nonFlagText(asString(value));
+  if (!text) return "";
+  if (/^\d+(?:\.\d+)?$/u.test(text)) return `${text}성급`;
+  if (/^\d+(?:\.\d+)?\s*성$/u.test(text)) return `${text.replace(/\s+/g, "")}급`;
+  return text;
+}
+
+function pickHotelGrade(row: UnknownRecord): string {
+  const textGrade = pickFirstString(row, [
+    "htlGrdNm",
+    "htlGradeNm",
+    "htlGrdCdNm",
+    "hotelGradeName",
+    "hotelGrade",
+    "grade",
+    "grdNm",
+    "grdCdNm",
+    "htlClasNm",
+    "htlClssNm",
+    "className",
+    "starRating",
+    "star",
+  ]);
+  const numericGrade = pickFirstNumber(row, ["htlGrdCd", "gradeValue", "starRating", "star"]);
+  return normalizeHotelGrade(textGrade ?? numericGrade);
+}
+
+function formatHotelName(hotelName: string, grade: string): string {
+  if (!grade || normalizeComparableText(hotelName).includes(normalizeComparableText(grade))) {
+    return hotelName;
+  }
+  return `${hotelName} (${grade})`;
+}
+
+function isYesFlag(value: unknown): boolean {
+  return asString(value)?.toUpperCase() === "Y";
 }
 
 function toDateString(date: Date): string {
@@ -293,9 +368,35 @@ function formatTimeLabel(value: unknown): string {
   return normalized.includes(":") ? normalized : `${normalized.slice(0, 2)}:${normalized.slice(2, 4)}`;
 }
 
+function normalizeFlightCode(airlineCode: string | undefined, flightNo: string | undefined): string | undefined {
+  const normalizedFlightNo = flightNo?.replace(/\s+/g, "").toUpperCase();
+  if (!normalizedFlightNo) return undefined;
+
+  const normalizedAirlineCode = airlineCode?.replace(/\s+/g, "").toUpperCase();
+  if (normalizedAirlineCode && !normalizedFlightNo.startsWith(normalizedAirlineCode)) {
+    return `${normalizedAirlineCode}${normalizedFlightNo}`;
+  }
+
+  return normalizedFlightNo;
+}
+
+function extractInventoryFlightCode(value: string | undefined): string | undefined {
+  const normalized = value?.replace(/\s+/g, "").toUpperCase();
+  if (!normalized) return undefined;
+  return /^([A-Z]{2}[0-9]{3,4})/u.exec(normalized)?.[1];
+}
+
 function formatAirSegment(segment: UnknownRecord, fallbackFlightNo?: string): string {
   const airline = pickFirstString(segment, ["airlNm", "airline"]);
-  const flightNo = pickFirstString(segment, ["flgtNm", "flightNo"]) ?? fallbackFlightNo;
+  const flightNo =
+    normalizeFlightCode(
+      pickFirstString(segment, ["airlCd", "airlineCode"]),
+      pickFirstString(segment, ["flgtNm", "flightNo"]) ?? fallbackFlightNo,
+    ) ??
+    normalizeFlightCode(
+      pickFirstString(segment, ["jntNvgtnAirlCd"]),
+      pickFirstString(segment, ["jntNvgtnFlgtNm"]),
+    );
   const depApt = pickFirstString(segment, ["depAptNm", "depAptCd"]);
   const arrApt = pickFirstString(segment, ["arrAptNm", "arrAptCd"]);
   const depHm = formatTimeLabel(pickFirstString(segment, ["depHm", "depTime"]));
@@ -322,17 +423,11 @@ function normalizeBasics(raw: unknown): ItineraryData["basics"] {
   const touristSpot = pickFirstRecord(root, ["scheduleAndTouristSpotInfo"]) ?? {};
 
   const includedItems = (pickFirstArray(base, ["trvlExpnInclList"]) ?? []).map((entry) => {
-    const row = isRecord(entry) ? entry : {};
-    const cat = pickFirstString(row, ["trvlExpnClstNm", "category", "gubun"]);
-    const desc = pickFirstString(row, ["trvlExpnDesc", "desc", "description"]);
-    return shortText([cat, desc].filter((text): text is string => !!text).join(": "));
+    return travelExpenseDescription(entry);
   });
 
   const excludedItems = (pickFirstArray(base, ["trvlExpnNoneInclList", "trvlNoneInclList"]) ?? []).map((entry) => {
-    const row = isRecord(entry) ? entry : {};
-    const cat = pickFirstString(row, ["trvlExpnClstNm", "category", "gubun"]);
-    const desc = pickFirstString(row, ["trvlExpnDesc", "desc", "description"]);
-    return shortText([cat, desc].filter((text): text is string => !!text).join(": "));
+    return travelExpenseDescription(entry);
   });
 
   const optionalExpenseItems = (pickFirstArray(base, ["trvlChcExpnList"]) ?? []).map((entry) => {
@@ -358,7 +453,9 @@ function normalizeBasics(raw: unknown): ItineraryData["basics"] {
     return hotels
       .map((h) => {
         const row = isRecord(h) ? h : {};
-        return pickFirstString(row, ["htlKoNm", "htlEnNm", "name", "hotel"]);
+        const hotelName = normalizeHotelName(pickFirstString(row, ["htlKoNm", "htlEnNm", "name", "hotel"]));
+        if (!hotelName) return undefined;
+        return formatHotelName(hotelName, pickHotelGrade(row));
       })
       .filter((item): item is string => typeof item === "string" && item.length > 0);
   });
@@ -367,10 +464,14 @@ function normalizeBasics(raw: unknown): ItineraryData["basics"] {
     (isRecord(airSegments[0]) ? airSegments[0] : {});
   const inboundAir = airSegments.map((entry) => (isRecord(entry) ? entry : {})).find((entry) => asString(entry.segSeq) === "2") ??
     (isRecord(airSegments[1]) ? airSegments[1] : {});
+  const airInvInfo = pickFirstRecord(base, ["airInvInfo"]) ?? pickFirstRecord(itinerary, ["airInvInfo"]) ?? {};
+  const inventoryDepartureFlightCode =
+    extractInventoryFlightCode(pickFirstString(airInvInfo, ["splyInfoId"])) ??
+    extractInventoryFlightCode(pickFirstString(airInvInfo, ["patrId"]));
 
   return {
     flight: {
-      departure: formatAirSegment(outboundAir, pickFirstString(base, ["depFlgtCd"])),
+      departure: formatAirSegment(outboundAir, pickFirstString(base, ["depFlgtCd"]) ?? inventoryDepartureFlightCode),
       arrival: formatAirSegment(inboundAir, pickFirstString(base, ["arrFlgtCd"])),
       localVehicle: "",
     },
@@ -461,12 +562,12 @@ function normalizeMealDetailText(value: string, slot: MealSlot): string {
 
 function mealValueFromItem(item: UnknownRecord, mealOnly: UnknownRecord, slot: MealSlot): string {
   const direct = asString(mealOnly.value);
+  const mealContent = pickFirstString(item, ["mealCont"]);
+  const mealTypeFallback = mealContent ? undefined : pickFirstString(item, ["mealTypeNm"]);
   const candidates = [
     direct,
-    pickFirstString(item, ["mealCont", "mealDescription", "mealDesc"]),
-    pickFirstString(item, ["memoCont", "detailCont", "content", "description"]),
-    pickFirstString(item, ["cardNm", "memoTitlNm"]),
-    pickFirstString(item, ["mealTypeNm"]),
+    mealContent,
+    mealTypeFallback,
   ]
     .map((entry) => normalizeMealDetailText(entry ?? "", slot))
     .filter(Boolean);
@@ -562,61 +663,160 @@ function hasScheduleCardIdentity(item: UnknownRecord): boolean {
   );
 }
 
-function normalizeExtractedCardTitle(value: string): string {
-  const text = cleanScheduleContent(value)
-    .replace(/^(?:이전|다음)\s*/u, "")
-    .replace(/\s*(?:이전|다음)$/u, "")
-    .trim();
-  const parts = text.split(/\s+-\s+|[·•|]/u).map((entry) => entry.trim()).filter(Boolean);
-  const candidate = parts[parts.length - 1] ?? text;
-  return candidate
-    .replace(/^(?:묶음카드명|카드명은|방문지역|국가\s*수정|등록완료|실제로는|단일|카드매니저|테스트|tt+t*)\s*/u, "")
-    .trim();
+function extractParagraphTexts(value: string): string[] {
+  const matches = Array.from(value.matchAll(/<p\b[^>]*>([\s\S]*?)<\/p>/giu));
+  const paragraphTexts = matches
+    .map((match) => sanitizeText(match[1] ?? ""))
+    .filter(Boolean);
+
+  if (paragraphTexts.length > 0) return paragraphTexts;
+
+  const plainText = sanitizeText(value);
+  return plainText ? [plainText] : [];
 }
 
-function isUsableExtractedCardTitle(value: string): boolean {
-  const title = value.trim();
-  if (title.length < 2 || title.length > 36) return false;
-  if (isNonScheduleNotice(title) || isPlaceholderScheduleContent(title)) return false;
-  if (/^(?:이전|다음|상세보기|선택관광\s*더보기|펼치기|호텔소개|부대시설|객실시설)$/u.test(title)) return false;
-  if (/(?:묶음카드|카드매니저|등록되어\s*있음|테스트|tt+t*)/u.test(title)) return false;
-  return /[가-힣A-Za-z]/u.test(title);
+function selectCardSummaryText(values: string[]): string {
+  const korean = values.filter((entry) => /[가-힣]/u.test(entry));
+  return korean[korean.length - 1] ?? values[values.length - 1] ?? "";
 }
 
-function extractSingleCardTitlesFromText(value: string): string[] {
-  const text = sanitizeText(value)
-    .replace(/&amp;/g, "&")
-    .replace(/\s+/gu, " ")
-    .trim();
-  if (!text.includes("상세보기")) return [];
+function extractCardSummaryDetails(item: UnknownRecord): {
+  byContentId: Map<string, string>;
+  byTitle: Map<string, string>;
+  matchedContentIds: Set<string>;
+  matchedTitles: Set<string>;
+} {
+  const byContentId = new Map<string, string>();
+  const byTitle = new Map<string, string>();
+  const matchedContentIds = new Set<string>();
+  const matchedTitles = new Set<string>();
+  const html = [asString(item.cardCntntPc), asString(item.cardCntntMbl)].filter(Boolean).join("\n");
+  if (!html) return { byContentId, byTitle, matchedContentIds, matchedTitles };
 
-  const titles: string[] = [];
-  for (const match of text.matchAll(/(.{2,80}?)\s*상세보기/gu)) {
-    const title = normalizeExtractedCardTitle(match[1] ?? "");
-    if (isUsableExtractedCardTitle(title)) titles.push(title);
+  const pattern =
+    /<div class=["']_tit title["'][\s\S]*?<strong class=["']eps["']>([\s\S]*?)<\/strong>[\s\S]*?c_code=["']([^"']*)["'][\s\S]*?<div class=["']_tit_comt sub["']>([\s\S]*?)<\/div>/giu;
+
+  for (const match of html.matchAll(pattern)) {
+    const title = cleanScheduleContent(match[1] ?? "");
+    const contentId = asString(match[2]);
+    const titleKey = title ? normalizeComparableText(title) : "";
+    const summary = selectCardSummaryText(extractParagraphTexts(match[3] ?? ""));
+    if (contentId) matchedContentIds.add(contentId);
+    if (titleKey) matchedTitles.add(titleKey);
+    if (!summary) continue;
+    if (contentId) byContentId.set(contentId, summary);
+    if (titleKey) byTitle.set(titleKey, summary);
   }
 
-  return uniqueByText(titles);
+  return { byContentId, byTitle, matchedContentIds, matchedTitles };
 }
 
-function collectStringSingleCardsFromGroup(item: UnknownRecord): UnknownRecord[] {
-  const fields = [
-    "memoTitlNm",
-    "memoCont",
-    "cardNm",
-    "cardCntntPc",
-    "cardCntntMbl",
-    "content",
-    "description",
-  ];
-  return uniqueByText(fields.flatMap((field) => extractSingleCardTitlesFromText(asString(item[field]) ?? "")))
-    .map((title, index) => ({
-      id: `group-text-card-${index}-${normalizeComparableText(title)}`,
-      schdCatgCd: "001",
-      schdCatgNm: "관광",
+function collectCmsContentCardsFromItem(item: UnknownRecord): UnknownRecord[] {
+  const cmsInfoList = pickFirstArray(item, ["cmsInfoList"]) ?? [];
+  const summaries = extractCardSummaryDetails(item);
+  const categoryCode = asString(item.schdCatgCd);
+  const categoryName = pickFirstString(item, ["schdCatgNm", "category", "categoryName"]);
+
+  return cmsInfoList.flatMap((entry, index) => {
+    if (!isRecord(entry)) return [];
+
+    const isOptional = isOptionalTourItem(item, categoryCode, categoryName) || Boolean(asString(entry.chcStsngCd));
+    const rawContent = isOptional
+      ? pickFirstString(item, ["cardNm", "cardCntntTitlNm", "chcStsngNm"]) ?? asString(entry.cmsCntntNm)
+      : asString(entry.cmsCntntNm);
+    const content = normalizeOptionalTourTitle(cleanScheduleContent(rawContent ?? ""), isOptional);
+    if (!content) return [];
+
+    const contentId = asString(entry.cmsCntntId) ?? "";
+    const contentKey = normalizeComparableText(content);
+    const detail =
+      summaries.byContentId.get(contentId) ??
+      summaries.byTitle.get(contentKey) ??
+      (
+        isOptional || summaries.matchedContentIds.has(contentId) || summaries.matchedTitles.has(contentKey)
+          ? ""
+          : sanitizeMultilineText(entry.cmsCntntCont)
+      );
+    const id =
+      asString(entry.cmsCntntId) ??
+      asString(entry.cmsCardId) ??
+      `cms-content-${index}-${normalizeComparableText(content)}`;
+
+    return [{
+      id,
+      schdCatgCd: asString(item.schdCatgCd) ?? "001",
+      schdCatgNm: asString(item.schdCatgNm) ?? "관광",
       cmsCardDvCd: "S",
-      cardNm: title,
-    }));
+      ...(asString(item.chcStsngCd) || asString(entry.chcStsngCd)
+        ? { chcStsngCd: asString(entry.chcStsngCd) ?? asString(item.chcStsngCd) }
+        : {}),
+      ...(asString(item.spclStsngYn) ? { spclStsngYn: asString(item.spclStsngYn) } : {}),
+      ...(asString(entry.cmsSpclStsngYn) ? { cmsSpclStsngYn: asString(entry.cmsSpclStsngYn) } : {}),
+      cmsCntntNm: content,
+      ...(detail ? { cmsCntntCont: detail } : {}),
+      ...(isOptional && detail ? { htmlSummaryDetail: detail } : {}),
+    }];
+  });
+}
+
+function scheduleContentPrefix(
+  item: UnknownRecord,
+  categoryCode: string | undefined,
+  categoryName: string | undefined,
+): string {
+  if (!isOptionalTourItem(item, categoryCode, categoryName)) return "";
+
+  const isSpecial = isYesFlag(item.spclStsngYn) || isYesFlag(item.cmsSpclStsngYn);
+  return `${isSpecial ? "[스페셜포함]" : ""}[선택관광]`;
+}
+
+function isOptionalTourItem(
+  item: UnknownRecord,
+  categoryCode: string | undefined,
+  categoryName: string | undefined,
+): boolean {
+  return (
+    categoryCode === "005" ||
+    categoryName?.includes("선택관광") === true ||
+    Boolean(asString(item.chcStsngCd))
+  );
+}
+
+function normalizeOptionalTourTitle(value: string, isOptional: boolean): string {
+  if (!isOptional) return value;
+  return splitMcpScheduleContent(value).content;
+}
+
+function optionalTourHtmlSummaryDetail(item: UnknownRecord, content: string): string {
+  const explicitSummary = pickFirstString(item, ["htmlSummaryDetail"]);
+  if (explicitSummary) return explicitSummary;
+
+  const summaries = extractCardSummaryDetails(item);
+  const contentId = asString(item.cmsCntntId);
+  if (contentId) {
+    const byContentId = summaries.byContentId.get(contentId);
+    if (byContentId) return byContentId;
+  }
+
+  const titleKeys = uniqueByText([
+    content,
+    pickFirstString(item, ["cardNm"]),
+    pickFirstString(item, ["cardCntntTitlNm"]),
+    pickFirstString(item, ["chcStsngNm"]),
+    pickFirstString(item, ["cmsCntntNm"]),
+  ]).map((entry) => normalizeComparableText(entry));
+
+  for (const titleKey of titleKeys) {
+    const byTitle = summaries.byTitle.get(titleKey);
+    if (byTitle) return byTitle;
+  }
+
+  return "";
+}
+
+function withScheduleContentPrefix(content: string, prefix: string): string {
+  if (!prefix || content.startsWith(prefix)) return content;
+  return `${prefix}${content}`;
 }
 
 function collectNestedSingleCards(value: unknown, depth = 0): UnknownRecord[] {
@@ -720,17 +920,15 @@ function selectScheduleTitle(
     return memoTitle ?? pickFirstString(item, ["content", "description", "title", "detail", "memo"]) ?? "";
   }
 
+  if (isOptionalTourItem(item, categoryCode, categoryName)) {
+    return pickFirstString(item, ["cardNm", "cardCntntTitlNm", "chcStsngNm", "cmsCntntNm"]) ??
+      memoTitle ??
+      "";
+  }
+
   if (categoryCode === "001" || categoryCode === "005" || categoryCode === "007") {
-    const extractedTitle = [
-      "memoCont",
-      "cardCntntPc",
-      "cardCntntMbl",
-      "content",
-      "description",
-    ]
-      .flatMap((field) => extractSingleCardTitlesFromText(asString(item[field]) ?? ""))
-      .find(Boolean);
-    return cardName ??
+    return pickFirstString(item, ["cmsCntntNm"]) ??
+      cardName ??
       pickFirstString(item, [
         "chcStsngNm",
         "sghtNm",
@@ -739,12 +937,12 @@ function selectScheduleTitle(
         "cntntNm",
         "attractionName",
       ]) ??
-      extractedTitle ??
       memoTitle ??
       "";
   }
 
   return memoTitle ??
+    pickFirstString(item, ["cmsCntntNm"]) ??
     cardName ??
     pickFirstString(item, ["content", "description", "title", "detail", "name", "memo"]) ??
     categoryName ??
@@ -813,7 +1011,10 @@ function normalizeDayItem(
   const explicitId = asString(item.id);
   const safeId = explicitId ?? `item-${dayNoFallback}-${itemNoFallback}`;
 
-  const inferredItemType = inferItemTypeFromContent(content, itemType);
+  const inferredItemType = categoryCode === "099" || categoryCode === "102"
+    ? itemType
+    : inferItemTypeFromContent(content, itemType);
+  const isOptional = isOptionalTourItem(item, categoryCode, categoryName);
   const normalized: ScheduleItem = {
     id: safeId,
     type: inferredItemType,
@@ -825,8 +1026,18 @@ function normalizeDayItem(
     ...(mealSlot ? { mealSlot } : {}),
   };
   const split = splitMcpScheduleContent(content.length > 0 ? content : normalizeTransferTitleOrMemo(item, title, memoCont));
-  normalized.content = split.content;
-  if (split.detail) normalized.detail = split.detail;
+  const normalizedContent = normalizeOptionalTourTitle(split.content, isOptional);
+  normalized.content = withScheduleContentPrefix(normalizedContent, scheduleContentPrefix(item, categoryCode, categoryName));
+  if (isOptional) {
+    const htmlSummaryDetail = optionalTourHtmlSummaryDetail(item, normalizedContent);
+    if (htmlSummaryDetail) normalized.detail = htmlSummaryDetail;
+  } else if (split.detail) {
+    normalized.detail = split.detail;
+  }
+  if (!isOptional && itemType !== "MEAL") {
+    const cmsDetail = sanitizeMultilineText(item.cmsCntntCont);
+    if (cmsDetail) normalized.detail = cmsDetail;
+  }
   if (normalized.type === "ACCOMMODATION" && !normalized.hotel) normalized.hotel = normalized.content;
 
   if (hasMeal) {
@@ -841,9 +1052,28 @@ function normalizeDayItems(
   itemNoFallback: number,
 ): ScheduleItem[] {
   const item = isRecord(raw) ? raw : {};
+  const categoryCode = asString(item.schdCatgCd);
 
-  if (isGroupCard(item)) {
-    return [...collectNestedSingleCards(item), ...collectStringSingleCardsFromGroup(item)]
+  if (categoryCode !== "004") {
+    const cmsCards = collectCmsContentCardsFromItem(item);
+    if (cmsCards.length > 0) {
+      return cmsCards
+        .map((child, childIndex) => {
+          const mergedChild: UnknownRecord = {
+            ...item,
+            ...child,
+            schdCatgCd: asString(child.schdCatgCd) ?? asString(item.schdCatgCd) ?? "001",
+            schdCatgNm: asString(child.schdCatgNm) ?? asString(item.schdCatgNm) ?? "관광",
+            id: asString(child.id) ?? `cms-card-${dayNoFallback}-${itemNoFallback}-${childIndex}`,
+          };
+          return normalizeDayItem(mergedChild, dayNoFallback, itemNoFallback + childIndex);
+        })
+        .filter((entry): entry is ScheduleItem => entry !== null);
+    }
+  }
+
+  if (isGroupCard(item) && categoryCode !== "004") {
+    return collectNestedSingleCards(item)
       .map((child, childIndex) => {
         const mergedChild: UnknownRecord = {
           ...child,
@@ -862,7 +1092,7 @@ function normalizeDayItems(
 
 function normalizeDay(raw: unknown, index: number): DaySchedule {
   const day = isRecord(raw) ? raw : {};
-  const dayNo = asNumber(day.schdSeq) ?? asNumber(day.dayNo) ?? asNumber(day.day) ?? index + 1;
+  const dayNo = asNumber(day.schdDay) ?? asNumber(day.dayNo) ?? asNumber(day.day) ?? asNumber(day.schdSeq) ?? index + 1;
   const dateRaw = pickFirstString(day, ["strtDt", "date", "day", "startDate", "dateAt"]) || "";
   const startDate = asString(day.startDate) ?? "";
   const date = normalizeDate(dateRaw) || normalizeDate(startDate) || "";
@@ -874,13 +1104,15 @@ function normalizeDay(raw: unknown, index: number): DaySchedule {
   const hotelItems = htlInfo
     .map((entry, hotelIndex) => {
       if (!isRecord(entry)) return null;
-      const hotelNm = pickFirstString(entry, ["htlKoNm", "htlEnNm", "name", "hotel"]);
+      const rawHotelNm = pickFirstString(entry, ["htlKoNm", "htlEnNm", "name", "hotel"]);
+      const hotelNm = normalizeHotelName(rawHotelNm);
       if (!hotelNm) return null;
+      const formattedHotelName = formatHotelName(hotelNm, pickHotelGrade(entry));
       return {
         id: `hotel-${dayNo}-${hotelIndex}`,
         type: "ACCOMMODATION" as const,
-        content: `${hotelNm} 숙박`,
-        hotel: hotelNm,
+        content: formattedHotelName,
+        hotel: formattedHotelName,
         region: pickFirstString(entry, ["cityNm", "cityCd", "region", "area"]) ?? "",
       } as ScheduleItem;
     })
@@ -977,10 +1209,11 @@ function normalizeOverview(raw: unknown): ItineraryData["overview"] {
   const childCnt = pickFirstNumber(base, ["chdCnt", "childCnt", "child"]) ?? 0;
   const infantCnt = pickFirstNumber(base, ["infCnt", "infantCnt", "infant"]) ?? 0;
   const escortCnt = pickFirstNumber(base, ["escortCnt", "escort"]) ?? 0;
+  const focCnt = pickFirstNumber(base, ["focCnt", "foc"]) ?? 0;
 
-  const adultFare = pickFirstNumber(base, ["adtAmt", "adultPerPerson", "adtTaduAmt"]) ?? 0;
-  const childFare = pickFirstNumber(base, ["chdAmt", "childPerPerson", "chdTaduAmt"]) ?? 0;
-  const infantFare = pickFirstNumber(base, ["infAmt", "infantPerPerson", "infTaduAmt"]) ?? 0;
+  const adultFare = pickFirstNumber(base, ["adtTotlAmt", "adultTotalPerPerson", "adtAmt", "adultPerPerson", "adtTaduAmt"]) ?? 0;
+  const childFare = pickFirstNumber(base, ["chdTotlAmt", "childTotalPerPerson", "chdAmt", "childPerPerson", "chdTaduAmt"]) ?? 0;
+  const infantFare = pickFirstNumber(base, ["infTotlAmt", "infantTotalPerPerson", "infAmt", "infantPerPerson", "infTaduAmt"]) ?? 0;
   const total =
     pickFirstNumber(base, ["adtTotlAmt"]) ??
     pickFirstNumber(base, ["total"]) ??
@@ -997,6 +1230,7 @@ function normalizeOverview(raw: unknown): ItineraryData["overview"] {
       child: childCnt,
       infant: infantCnt,
       escort: escortCnt,
+      foc: focCnt,
     },
     fare: {
       adultPerPerson: adultFare,

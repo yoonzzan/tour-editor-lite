@@ -4,7 +4,7 @@
 // TRANSFER / SIGHTSEEING / MEAL / ACCOMMODATION / OTHER
 
 import type { MealSlot, ScheduleItem, ScheduleItemType } from "@/types";
-import type { ReactElement, ReactNode } from "react";
+import { useEffect, useRef, type ReactElement, type ReactNode } from "react";
 import {
   mealSlotLabel,
   MEAL_SLOTS,
@@ -39,6 +39,10 @@ const ITEM_TYPE_OPTIONS: Array<{ type: ScheduleItemType; label: string }> = [
   { type: "OTHER", label: "기타" },
 ];
 
+function isLooseTimeInput(value: string): boolean {
+  return /^(?:\d{0,2}|\d{1,2}:\d{0,2})$/u.test(value);
+}
+
 export function ScheduleItemForm({ item, onChange, onRemove, dragHandle }: Props) {
   const patch = (partial: Partial<ScheduleItem>) =>
     onChange({ ...item, ...partial });
@@ -71,6 +75,11 @@ export function ScheduleItemForm({ item, onChange, onRemove, dragHandle }: Props
         [mealSlot]: content || undefined,
       },
     });
+  }
+
+  function handleTimeChange(value: string): void {
+    if (!isLooseTimeInput(value)) return;
+    patch({ time: value });
   }
 
   function normalizeItemType(nextType: ScheduleItemType): ScheduleItem {
@@ -129,7 +138,7 @@ export function ScheduleItemForm({ item, onChange, onRemove, dragHandle }: Props
           aria-label="항목구분"
           value={item.type}
           onChange={(e) => handleTypeChange(e.target.value as ScheduleItemType)}
-          className={`h-8 rounded border border-input bg-transparent px-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring ${TYPE_COLORS[item.type]}`}
+          className={`hub-select ${TYPE_COLORS[item.type]}`}
         >
           {ITEM_TYPE_OPTIONS.map(({ type, label }) => (
             <option key={type} value={type}>
@@ -141,11 +150,11 @@ export function ScheduleItemForm({ item, onChange, onRemove, dragHandle }: Props
     );
   }
 
-  const responsiveLabelClass = "text-xs text-muted-foreground md:sr-only";
+  const responsiveLabelClass = "text-[11.5px] text-muted-foreground md:sr-only";
 
   return (
     <div
-      className="group relative flex gap-2 rounded-md border border-border bg-background p-3"
+      className="group relative flex gap-2 border-x border-b border-grid-border bg-white p-2"
       data-item-type={item.type}
     >
       <div
@@ -161,7 +170,7 @@ export function ScheduleItemForm({ item, onChange, onRemove, dragHandle }: Props
         <button
           onClick={onRemove}
           aria-label="항목 삭제"
-          className="absolute right-3 top-3 inline-flex h-8 w-7 items-center justify-center rounded p-0.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+          className="absolute right-2 top-2 inline-flex h-6 w-6 items-center justify-center text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
         >
           ✕
         </button>
@@ -192,7 +201,7 @@ export function ScheduleItemForm({ item, onChange, onRemove, dragHandle }: Props
               id={`${item.id}-time`}
               label="시간"
               value={timeValue}
-              onChange={(v) => patch({ time: v })}
+              onChange={handleTimeChange}
               placeholder="예: 10:30"
               className="md:col-span-1"
             />
@@ -210,7 +219,7 @@ export function ScheduleItemForm({ item, onChange, onRemove, dragHandle }: Props
                   aria-label="식사 구분"
                   value={mealSlot}
                   onChange={(e) => handleMealSlotChange(e.target.value as MealSlot)}
-                  className="h-8 w-24 shrink-0 rounded border border-input bg-transparent px-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+                  className="hub-select w-24 shrink-0"
                 >
                   {MEAL_SLOTS.map((slot) => (
                     <option key={slot.key} value={slot.key}>
@@ -224,7 +233,7 @@ export function ScheduleItemForm({ item, onChange, onRemove, dragHandle }: Props
                   value={getMealValue()}
                   onChange={(e) => handleMealContentChange(e.target.value)}
                   placeholder={`${mealSlotLabel(mealSlot)} 입력`}
-                  className="h-8 w-full rounded border border-input bg-transparent px-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+                  className="hub-input"
                 />
               </div>
             </div>
@@ -256,7 +265,7 @@ export function ScheduleItemForm({ item, onChange, onRemove, dragHandle }: Props
               id={`${item.id}-time`}
               label="시간"
               value={timeValue}
-              onChange={(v) => patch({ time: v })}
+              onChange={handleTimeChange}
               placeholder="예: 10:30"
               className="md:col-span-1"
             />
@@ -272,6 +281,7 @@ export function ScheduleItemForm({ item, onChange, onRemove, dragHandle }: Props
                   }
                   placeholder="호텔명 입력"
                   className="md:col-span-3"
+                  multiline
                 />
                 <Field
                   id={`${item.id}-detail`}
@@ -280,6 +290,7 @@ export function ScheduleItemForm({ item, onChange, onRemove, dragHandle }: Props
                   onChange={(v) => patch({ detail: v })}
                   placeholder="상세 입력"
                   className="md:col-span-4"
+                  multiline
                 />
               </>
             ) : (
@@ -291,6 +302,7 @@ export function ScheduleItemForm({ item, onChange, onRemove, dragHandle }: Props
                   onChange={(v) => patch({ content: v })}
                   placeholder="내용 입력"
                   className="md:col-span-3"
+                  multiline
                 />
                 <Field
                   id={`${item.id}-detail`}
@@ -299,6 +311,7 @@ export function ScheduleItemForm({ item, onChange, onRemove, dragHandle }: Props
                   onChange={(v) => patch({ detail: v })}
                   placeholder="상세 입력"
                   className="md:col-span-4"
+                  multiline
                 />
               </>
             )}
@@ -318,6 +331,7 @@ type FieldProps = {
   onChange: (v: string) => void;
   placeholder?: string;
   className?: string;
+  multiline?: boolean;
 };
 
 function Field({
@@ -327,20 +341,67 @@ function Field({
   onChange,
   placeholder,
   className = "",
+  multiline = false,
 }: FieldProps) {
   return (
     <div className={`flex flex-col gap-0.5 ${className}`}>
-      <label htmlFor={id} className="text-xs text-muted-foreground md:sr-only">
+      <label htmlFor={id} className="text-[11.5px] text-muted-foreground md:sr-only">
         {label}
       </label>
-      <input
-        id={id}
-        type="text"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        className="h-8 w-full rounded border border-input bg-transparent px-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
-      />
+      {multiline ? (
+        <AutoResizeTextarea
+          id={id}
+          value={value}
+          onChange={onChange}
+          placeholder={placeholder}
+        />
+      ) : (
+        <input
+          id={id}
+          type="text"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          className="hub-input"
+        />
+      )}
     </div>
+  );
+}
+
+function AutoResizeTextarea({
+  id,
+  value,
+  onChange,
+  placeholder,
+}: {
+  id: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+}) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.style.height = "auto";
+    if (value.trim().length === 0) {
+      textarea.style.height = "var(--hub-control-height)";
+      return;
+    }
+    textarea.style.height = `${textarea.scrollHeight}px`;
+  }, [value]);
+
+  return (
+    <textarea
+      ref={textareaRef}
+      id={id}
+      rows={1}
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      placeholder={placeholder}
+      className="hub-textarea overflow-hidden"
+    />
   );
 }
