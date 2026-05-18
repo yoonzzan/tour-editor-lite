@@ -147,6 +147,87 @@ describe("parseItineraryByAi fallback", () => {
     expect(result.diagnostics.noiseRemovedCount).toBeGreaterThanOrEqual(0);
   });
 
+  it("keeps region transport and time in typed direct input lines", async () => {
+    process.env.OPENAI_API_KEY = "";
+
+    const { parseItineraryWithDiagnostics } = await import("@/lib/itinerary/aiParser");
+    const rawText = `1일차 2026-06-02
+- 이동 | 지역=인천 | 교통편=OZ751 | 시간=10:00 | 인천공항 출발
+- 관광 | 지역=싱가포르 | 교통편=전용버스 | 시간=15:30 | 머라이언 공원
+- 식사 | 지역=싱가포르 | 교통편=도보 | 시간=18:00 | 석식: 현지식`;
+
+    const result = await parseItineraryWithDiagnostics({ rawText, title: "직접입력 일정" });
+    const dayOne = result.itinerary.days.find((day) => day.dayNo === 1);
+    const transfer = dayOne?.items.find((item) => item.content.includes("인천공항 출발"));
+    const sightseeing = dayOne?.items.find((item) => item.content.includes("머라이언 공원"));
+    const dinner = dayOne?.items.find((item) => item.mealSlot === "dinner");
+
+    expect(transfer).toMatchObject({
+      type: "TRANSFER",
+      region: "인천",
+      transport: "OZ751",
+      time: "10:00",
+    });
+    expect(sightseeing).toMatchObject({
+      type: "SIGHTSEEING",
+      region: "싱가포르",
+      transport: "전용버스",
+      time: "15:30",
+    });
+    expect(dinner).toMatchObject({
+      type: "MEAL",
+      region: "싱가포르",
+      transport: "도보",
+      time: "18:00",
+    });
+  });
+
+  it("ignores editable preview section headers and keeps starred day markers", async () => {
+    process.env.OPENAI_API_KEY = "";
+
+    const { parseItineraryWithDiagnostics } = await import("@/lib/itinerary/aiParser");
+    const rawText = `<<상품 정보>>
+상품명: 싱가포르 4박 5일
+**항공/교통**
+항공 출발: OZ751 인천 10:00 → 싱가포르 15:30
+<<상세 일정>>
+*1일차*
+2026-06-02
+- 이동 | 지역=인천 | 교통편=OZ751 | 시간=10:00 | 인천공항 출발
+**상세 일정**
+*2일차*
+2026-06-03
+- 관광 | 지역=싱가포르 | 교통편=전용버스 | 시간=15:30 | 머라이언 공원`;
+
+    const result = await parseItineraryWithDiagnostics({ rawText, title: "미리보기 재파싱" });
+    const flatItems = result.itinerary.days.flatMap((day) => day.items);
+
+    expect(result.itinerary.days.map((day) => day.dayNo)).toEqual([1, 2]);
+    expect(result.itinerary.days[0]?.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "TRANSFER",
+          content: "인천공항 출발",
+          region: "인천",
+          transport: "OZ751",
+          time: "10:00",
+        }),
+      ])
+    );
+    expect(result.itinerary.days[1]?.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "SIGHTSEEING",
+          content: "머라이언 공원",
+          region: "싱가포르",
+          transport: "전용버스",
+          time: "15:30",
+        }),
+      ])
+    );
+    expect(flatItems.some((item) => /상품 정보|항공\/교통|상세 일정/u.test(item.content))).toBe(false);
+  });
+
   it("keeps deterministic parsing coverage for schedules after long leading text", async () => {
     process.env.OPENAI_API_KEY = "";
 

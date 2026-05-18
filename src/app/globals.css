@@ -219,6 +219,12 @@
     box-shadow: 0 0 0 1px hsl(var(--primary) / 0.3);
   }
 
+  .hub-input:read-only:focus,
+  .hub-textarea:read-only:focus {
+    border-color: hsl(var(--input));
+    box-shadow: none;
+  }
+
   .hub-btn {
     display: inline-flex;
     height: 24px;

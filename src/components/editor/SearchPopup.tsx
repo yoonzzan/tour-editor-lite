@@ -35,6 +35,16 @@ interface Props {
   onClose: () => void;
 }
 
+interface ImportPreview {
+  sourceTab: Tab;
+  title: string;
+  itinerary: ItineraryData;
+  text: string;
+  code?: string;
+  source?: string;
+  requestGuid?: string;
+}
+
 interface ParseApiResponse {
   itinerary?: ItineraryData;
   diagnostics?: {
@@ -344,13 +354,28 @@ function parserDiagnosticMessage(diagnostics: ParseApiResponse["diagnostics"]): 
   ].join("\n");
 }
 
+function formatEditableSegment(value: string | undefined): string {
+  return (value ?? "").replace(/\s*\|\s*/gu, " / ").replace(/\s+/gu, " ").trim();
+}
+
+function formatItemMetaForEditableText(item: ScheduleItem): string[] {
+  return [
+    item.region ? `지역=${formatEditableSegment(item.region)}` : "",
+    item.transport ? `교통편=${formatEditableSegment(item.transport)}` : "",
+    item.time ? `시간=${formatEditableSegment(item.time)}` : "",
+  ].filter(Boolean);
+}
+
 function formatItemForEditableText(item: ScheduleItem): string {
+  const meta = formatItemMetaForEditableText(item);
   if (item.type === "MEAL") {
     const meals = getMealSlotRows(item, { includeEmpty: false });
     if (meals.length > 0) {
-      return meals.map(({ label, value }) => `식사 | ${label}: ${value}`).join("\n");
+      return meals
+        .map(({ label, value }) => ["식사", ...meta, `${label}: ${formatEditableSegment(value)}`].join(" | "))
+        .join("\n");
     }
-    return `식사 | ${item.content}`;
+    return ["식사", ...meta, formatEditableSegment(item.content)].join(" | ");
   }
 
   const labels: Record<ScheduleItem["type"], string> = {
@@ -360,10 +385,9 @@ function formatItemForEditableText(item: ScheduleItem): string {
     ACCOMMODATION: "숙박",
     OTHER: "기타",
   };
-  const content = mergeScheduleContent(item.content, item.detail);
-  const meta = [labels[item.type], item.time ? `시간=${item.time}` : ""].filter(Boolean);
+  const content = formatEditableSegment(mergeScheduleContent(item.content, item.detail));
 
-  return `${meta.join(" | ")} | ${content}`;
+  return [labels[item.type], ...meta, content].filter(Boolean).join(" | ");
 }
 
 function stripPreviewHtml(value: string): string {
@@ -420,7 +444,7 @@ function appendPreviewText(lines: string[], label: string, value: string): void 
 function itineraryToEditableText(itinerary: ItineraryData): string {
   const basics = itinerary.basics;
   const fare = itinerary.overview.fare;
-  const lines: string[] = ["**상품 정보**"];
+  const lines: string[] = ["<<상품 정보>>"];
 
   appendPreviewText(lines, "상품명", itinerary.header.groupName);
   appendPreviewList(lines, "방문도시", splitPreviewList(itinerary.overview.cities, /\s*,\s*/u));
@@ -430,19 +454,19 @@ function itineraryToEditableText(itinerary: ItineraryData): string {
   }
   lines.push("");
 
-  lines.push("**항공/교통**");
+  lines.push("<<항공/교통>>");
   appendPreviewText(lines, "항공 출발", basics.flight.departure);
   appendPreviewText(lines, "항공 귀국", basics.flight.arrival);
   appendPreviewText(lines, "차량", basics.flight.localVehicle);
   lines.push("");
 
-  lines.push("**숙박**");
+  lines.push("<<숙박>>");
   appendPreviewList(lines, "숙박호텔", splitPreviewList(basics.accommodation.hotel, /\s*,\s*/u));
   appendPreviewText(lines, "호텔등급", basics.accommodation.grade);
   appendPreviewText(lines, "1객실이용인원", basics.accommodation.occupancy);
   lines.push("");
 
-  lines.push("**포함/불포함**");
+  lines.push("<<포함/불포함>>");
   appendPreviewList(lines, "포함사항", splitPreviewList(basics.included, /\s*\/\s*/u));
   appendPreviewList(lines, "불포함사항", splitPreviewList(basics.excluded, /\s*\/\s*/u));
   appendPreviewList(lines, "선택관광", splitPreviewList(basics.optionalTour, /\s*\/\s*/u));
@@ -452,13 +476,14 @@ function itineraryToEditableText(itinerary: ItineraryData): string {
   appendPreviewList(lines, "유의사항", splitPreviewList(basics.notes, /\n+/u));
 
   if (itinerary.days.length > 0) {
-    lines.push("**상세 일정**");
+    lines.push("<<상세 일정>>");
   }
 
   for (const day of itinerary.days) {
     lines.push(`*${day.dayNo}일차*`);
     if (day.date) lines.push(day.date);
     for (const item of day.items) {
+      if (item.type === "OTHER" && item.content === day.date) continue;
       lines.push(`- ${formatItemForEditableText(item)}`);
     }
     lines.push("");
@@ -485,18 +510,20 @@ const DIRECT_INPUT_TEMPLATE = [
   "항공 출발: OZ751 인천 10:00 → 싱가포르 15:30",
   "항공 귀국: OZ752 싱가포르 23:00 → 인천 06:30",
   "숙박호텔: Aloft Singapore Novena",
+  "포함사항: 왕복항공권 / 숙박 / 일정표상 식사",
+  "불포함사항: 개인경비 / 여행자보험",
   "",
   "1일차 2026-06-02",
-  "- 이동 | 시간=10:00 | 인천공항 출발",
-  "- 관광 | 머라이언 공원",
-  "- 식사 | 석식: 현지식",
-  "- 숙박 | Aloft Singapore Novena",
+  "- 10시 인천공항 출발",
+  "- 머라이언 공원 관광",
+  "- 석식 현지식",
+  "- Aloft Singapore Novena 숙박",
   "",
   "2일차 2026-06-03",
-  "- 식사 | 조식: 호텔식",
-  "- 관광 | 센토사섬",
-  "- 식사 | 중식: 한식",
-  "- 식사 | 석식: 송파바쿠테",
+  "- 조식 뷔페",
+  "- 센토사섬 관광",
+  "- 중식 한식",
+  "- 석식 송파바쿠테",
 ].join("\n");
 
 export function SearchPopup({ onClose }: Props) {
@@ -510,9 +537,7 @@ export function SearchPopup({ onClose }: Props) {
   const [urlInput, setUrlInput] = useState("");
   const [urlLoading, setUrlLoading] = useState(false);
   const [urlError, setUrlError] = useState<string | null>(null);
-  const [searchResult, setSearchResult] = useState<SearchResult | null>(null);
-  const [searchResultTab, setSearchResultTab] = useState<"code" | "url" | null>(null);
-  const [previewProductText, setPreviewProductText] = useState("");
+  const [importPreview, setImportPreview] = useState<ImportPreview | null>(null);
 
   // ── 파일 탭 상태 ─────────────────────────────────────
   const [isDragging, setIsDragging] = useState(false);
@@ -528,10 +553,7 @@ export function SearchPopup({ onClose }: Props) {
   const [directError, setDirectError] = useState<string | null>(null);
   const [importProgress, setImportProgress] = useState<ImportProgressState | null>(null);
   const isImporting = fileLoading || directLoading;
-  const visibleSearchResult =
-    searchResult && (activeTab === "code" || activeTab === "url") && searchResultTab === activeTab
-      ? searchResult
-      : null;
+  const visibleImportPreview = importPreview?.sourceTab === activeTab ? importPreview : null;
 
   // ── 상품코드 조회 ─────────────────────────────────────
   async function handleSearch() {
@@ -540,8 +562,7 @@ export function SearchPopup({ onClose }: Props) {
 
     setCodeLoading(true);
     setCodeError(null);
-    setSearchResult(null);
-    setSearchResultTab(null);
+    setImportPreview(null);
 
     try {
       const res = await fetch(`/api/mcp/products/${encodeURIComponent(code)}`, {
@@ -560,9 +581,15 @@ export function SearchPopup({ onClose }: Props) {
       }
       const body = JSON.parse(raw) as SearchResult;
       const aligned = alignDaysToTravelPeriod(body.itinerary).itinerary;
-      setSearchResult({ ...body, itinerary: aligned });
-      setSearchResultTab("code");
-      setPreviewProductText(itineraryToEditableText(aligned));
+      setImportPreview({
+        sourceTab: "code",
+        title: body.name,
+        itinerary: aligned,
+        text: itineraryToEditableText(aligned),
+        code: body.code,
+        source: body._meta?.source ?? "unknown",
+        requestGuid: body._meta?.requestGuid,
+      });
     } catch {
       setCodeError("네트워크 오류가 발생했습니다. 다시 시도해 주세요.");
     } finally {
@@ -576,8 +603,7 @@ export function SearchPopup({ onClose }: Props) {
 
     setUrlLoading(true);
     setUrlError(null);
-    setSearchResult(null);
-    setSearchResultTab(null);
+    setImportPreview(null);
 
     try {
       const res = await fetch("/api/hanatour/products/from-url", {
@@ -598,9 +624,15 @@ export function SearchPopup({ onClose }: Props) {
       }
       const body = JSON.parse(raw) as SearchResult;
       const aligned = alignDaysToTravelPeriod(body.itinerary).itinerary;
-      setSearchResult({ ...body, itinerary: aligned });
-      setSearchResultTab("url");
-      setPreviewProductText(itineraryToEditableText(aligned));
+      setImportPreview({
+        sourceTab: "url",
+        title: body.name,
+        itinerary: aligned,
+        text: itineraryToEditableText(aligned),
+        code: body.code,
+        source: body._meta?.source ?? "unknown",
+        requestGuid: body._meta?.requestGuid,
+      });
     } catch {
       setUrlError("네트워크 오류가 발생했습니다. 다시 시도해 주세요.");
     } finally {
@@ -609,8 +641,8 @@ export function SearchPopup({ onClose }: Props) {
   }
 
   function handleLoadProduct() {
-    if (!searchResult) return;
-    const aligned = alignDaysToTravelPeriod(searchResult.itinerary);
+    if (!visibleImportPreview) return;
+    const aligned = alignDaysToTravelPeriod(visibleImportPreview.itinerary);
     if (
       aligned.hasOutOfRangeContent &&
       aligned.expectedDayCount &&
@@ -623,13 +655,22 @@ export function SearchPopup({ onClose }: Props) {
   }
 
   async function handleCopyPreviewText() {
-    if (!previewProductText.trim()) return;
-    await navigator.clipboard.writeText(previewProductText);
+    if (!visibleImportPreview?.text.trim()) return;
+    await navigator.clipboard.writeText(visibleImportPreview.text);
   }
 
   function handleUseDirectInput() {
-    setDirectText(previewProductText);
+    if (!visibleImportPreview) return;
+    setDirectText(visibleImportPreview.text);
+    setImportPreview(null);
     setActiveTab("direct");
+  }
+
+  function handleDirectTextChange(value: string) {
+    setDirectText(value);
+    if (importPreview?.sourceTab === "direct") {
+      setImportPreview(null);
+    }
   }
 
   // ── 파일 유효성 검사 ──────────────────────────────────
@@ -651,20 +692,22 @@ export function SearchPopup({ onClose }: Props) {
     const file = e.dataTransfer.files[0];
     if (!file) return;
     const err = validateFile(file);
-    if (err) { setFileError(err); setFileName(null); setSelectedFile(null); return; }
+    if (err) { setFileError(err); setFileName(null); setSelectedFile(null); if (importPreview?.sourceTab === "file") setImportPreview(null); return; }
     setFileError(null);
     setFileName(file.name);
     setSelectedFile(file);
+    if (importPreview?.sourceTab === "file") setImportPreview(null);
   }
 
   function handleFileChange(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
     const err = validateFile(file);
-    if (err) { setFileError(err); setFileName(null); setSelectedFile(null); return; }
+    if (err) { setFileError(err); setFileName(null); setSelectedFile(null); if (importPreview?.sourceTab === "file") setImportPreview(null); return; }
     setFileError(null);
     setFileName(file.name);
     setSelectedFile(file);
+    if (importPreview?.sourceTab === "file") setImportPreview(null);
   }
 
   async function handleParseFile() {
@@ -697,17 +740,15 @@ export function SearchPopup({ onClose }: Props) {
         throw new Error("불러올 수 있는 일정이 없습니다.");
       }
       const aligned = alignDaysToTravelPeriod(parsed);
-      if (
-        aligned.hasOutOfRangeContent &&
-        aligned.expectedDayCount &&
-        !window.confirm(importAlignmentMessage(aligned.expectedDayCount, aligned.outOfRangeDayNos))
-      ) {
-        return;
-      }
       const diagnosticMessage = parserDiagnosticMessage(payload.diagnostics);
       if (diagnosticMessage) window.alert(diagnosticMessage);
-      loadFromProduct(aligned.itinerary);
-      onClose();
+      setImportPreview({
+        sourceTab: "file",
+        title: selectedFile.name,
+        itinerary: aligned.itinerary,
+        text: itineraryToEditableText(aligned.itinerary),
+        source: "file",
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : "파일에서 일정을 불러오지 못했습니다. 형식을 확인해 주세요.";
       setFileError(message);
@@ -746,17 +787,15 @@ export function SearchPopup({ onClose }: Props) {
         throw new Error("불러올 수 있는 일정이 없습니다.");
       }
       const aligned = alignDaysToTravelPeriod(parsed);
-      if (
-        aligned.hasOutOfRangeContent &&
-        aligned.expectedDayCount &&
-        !window.confirm(importAlignmentMessage(aligned.expectedDayCount, aligned.outOfRangeDayNos))
-      ) {
-        return;
-      }
       const diagnosticMessage = parserDiagnosticMessage(payload.diagnostics);
       if (diagnosticMessage) window.alert(diagnosticMessage);
-      loadFromProduct(aligned.itinerary);
-      onClose();
+      setImportPreview({
+        sourceTab: "direct",
+        title: "직접입력 일정",
+        itinerary: aligned.itinerary,
+        text: itineraryToEditableText(aligned.itinerary),
+        source: "direct",
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : "입력한 내용에서 일정을 불러오지 못했습니다. 형식을 확인해 주세요.";
       setDirectError(message);
@@ -767,16 +806,16 @@ export function SearchPopup({ onClose }: Props) {
   }
 
   function renderLookupResult() {
-    if (!visibleSearchResult) return null;
+    if (!visibleImportPreview) return null;
 
     return (
       <div className="hub-section p-3">
         <div className="mb-3 border border-primary/30 bg-primary/10 p-3">
           <p className="text-[12.5px] font-semibold text-foreground">
-            조회된 일정은 바로 입력됩니다.
+            조회된 일정 요약을 확인하세요.
           </p>
           <p className="mt-1 text-[12.5px] leading-[18px] text-muted-foreground">
-            일부 문구만 수정하려면 아래 요약을 복사하거나 직접 입력 탭으로 보내서 수정한 뒤 불러오세요.
+            그대로 반영하려면 일정 반영을 누르세요. 일부 문구만 수정하려면 아래 요약을 직접 입력 탭으로 보내서 수정한 뒤 불러오세요.
           </p>
           <div className="mt-2 flex flex-wrap gap-2">
             <button
@@ -798,7 +837,7 @@ export function SearchPopup({ onClose }: Props) {
         <div className="mb-3 flex items-start justify-between gap-2">
           <div>
             <p className="text-[12.5px] font-semibold text-foreground">
-              {visibleSearchResult.name}
+              {visibleImportPreview.title}
             </p>
           </div>
         </div>
@@ -809,14 +848,14 @@ export function SearchPopup({ onClose }: Props) {
           </label>
           <AutoResizeTextarea
             id="product-edit-text"
-            value={previewProductText}
+            value={visibleImportPreview.text}
             readOnly
           />
           <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11.5px] text-muted-foreground">
-            <span>상품코드: {visibleSearchResult.code}</span>
-            <span>데이터 소스: {visibleSearchResult._meta?.source ?? "unknown"}</span>
-            {visibleSearchResult._meta?.requestGuid && (
-              <span>요청 GUID: {visibleSearchResult._meta.requestGuid}</span>
+            {visibleImportPreview.code && <span>상품코드: {visibleImportPreview.code}</span>}
+            {visibleImportPreview.source && <span>데이터 소스: {visibleImportPreview.source}</span>}
+            {visibleImportPreview.requestGuid && (
+              <span>요청 GUID: {visibleImportPreview.requestGuid}</span>
             )}
           </div>
         </div>
@@ -1003,6 +1042,8 @@ export function SearchPopup({ onClose }: Props) {
                   지원 형식: Excel (.xlsx), CSV, JSON, TXT, PDF, HWP, HWPX, DOCX
                 </p>
               )}
+
+              {renderLookupResult()}
             </div>
           )}
 
@@ -1015,7 +1056,7 @@ export function SearchPopup({ onClose }: Props) {
                 </label>
                 <button
                   type="button"
-                  onClick={() => setDirectText((current) => current.trim() ? current : DIRECT_INPUT_TEMPLATE)}
+                  onClick={() => handleDirectTextChange(directText.trim() ? directText : DIRECT_INPUT_TEMPLATE)}
                   className="hub-btn hub-btn-custom h-[31px] shrink-0 px-2"
                 >
                   예시 채우기
@@ -1023,15 +1064,20 @@ export function SearchPopup({ onClose }: Props) {
               </div>
               <div className="shrink-0 border border-grid-border bg-muted/30 p-3 text-[11.5px] leading-[18px] text-muted-foreground">
                 <p className="font-medium text-foreground">권장 형식</p>
+                <p>상품명: 싱가포르 4박 5일</p>
+                <p>항공 출발: OZ751 인천 10:00 → 싱가포르 15:30</p>
+                <p>포함사항: 왕복항공권 / 숙박 / 일정표상 식사</p>
+                <p>불포함사항: 개인경비 / 여행자보험</p>
                 <p>1일차 2026-06-02</p>
-                <p>- 이동 | 시간=10:00 | 인천공항 출발</p>
-                <p>- 식사 | 중식: 현지식</p>
-                <p>- 숙박 | 호텔명</p>
+                <p>- 10시 인천공항 출발</p>
+                <p>- 머라이언 공원 관광</p>
+                <p>- 석식 현지식</p>
+                <p>- 호텔명 숙박</p>
               </div>
               <AutoResizeTextarea
                 id="direct-input"
                 value={directText}
-                onChange={setDirectText}
+                onChange={handleDirectTextChange}
                 placeholder={DIRECT_INPUT_TEMPLATE}
                 ariaLabel="일정 내용을 입력하세요. 일차, 날짜, 식사, 숙박을 줄 단위로 나누면 더 정확하게 불러옵니다."
                 className="hub-textarea min-h-[360px] w-full resize-none overflow-hidden"
@@ -1041,6 +1087,8 @@ export function SearchPopup({ onClose }: Props) {
                   {directError}
                 </p>
               )}
+
+              {renderLookupResult()}
             </div>
           )}
         </div>
@@ -1057,6 +1105,10 @@ export function SearchPopup({ onClose }: Props) {
           <button
             type="button"
             onClick={() => {
+              if (visibleImportPreview) {
+                handleLoadProduct();
+                return;
+              }
               if (activeTab === "code" || activeTab === "url") {
                 handleLoadProduct();
                 return;
@@ -1069,10 +1121,10 @@ export function SearchPopup({ onClose }: Props) {
             }}
             disabled={
               isImporting ||
-              (activeTab === "code" && (!searchResult || searchResultTab !== "code")) ||
-              (activeTab === "url" && (urlLoading || !searchResult || searchResultTab !== "url")) ||
-              (activeTab === "file" && (fileLoading || !selectedFile)) ||
-              (activeTab === "direct" && (!directText.trim() || directLoading))
+              (activeTab === "code" && !visibleImportPreview) ||
+              (activeTab === "url" && (urlLoading || !visibleImportPreview)) ||
+              (activeTab === "file" && !visibleImportPreview && (fileLoading || !selectedFile)) ||
+              (activeTab === "direct" && !visibleImportPreview && (!directText.trim() || directLoading))
             }
             className={FOOTER_PRIMARY_BUTTON_CLASS}
           >
@@ -1082,7 +1134,7 @@ export function SearchPopup({ onClose }: Props) {
                 파악중...
               </span>
             ) : (
-              "일정 불러오기"
+              visibleImportPreview ? "일정 반영" : "일정 불러오기"
             )}
           </button>
         </div>

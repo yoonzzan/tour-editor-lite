@@ -1005,7 +1005,7 @@ function dedupeItems(items: ScheduleItem[]): ScheduleItem[] {
 
 function parseDayNoToken(text: string): number | undefined {
   const compact = text.replace(/\s+/gu, "");
-  const normalized = compact.replace(/[:：\-\s]$/u, "");
+  const normalized = compact.replace(/^\*(?=(?:제)?\d{1,2}일차?\*)/u, "").replace(/\*$/u, "").replace(/[:：\-\s]$/u, "");
   const matched = /^(?:제)?(\d{1,2})일차?$/u.exec(normalized);
   if (!matched?.[1]) return undefined;
   const dayNo = Number(matched[1]);
@@ -1109,9 +1109,15 @@ function isSummaryTrailerLine(text: string): boolean {
   return /^(?:TOUR\s*FEE|참고사항|포함사항|불포함사항|기타사항|견적번호|기준코드)(?:$|[ :])/u.test(collapsed);
 }
 
+function isEditablePreviewSectionHeader(text: string): boolean {
+  const compact = cleanText(text).replace(/\s+/gu, "");
+  return /^(?:<<|\*\*)(?:상품정보|항공\/교통|숙박|포함\/불포함|상세일정)(?:>>|\*\*)$/u.test(compact);
+}
+
 function isScheduleChromeToken(text: string): boolean {
   const compact = cleanText(text).replace(/\s+/gu, "");
   if (!compact) return false;
+  if (isEditablePreviewSectionHeader(text)) return true;
   if (/^(?:항목구분|지역|교통편|시간|내용|식사|숙박|이동|관광|항목추가|개요|여정)$/u.test(compact)) {
     return true;
   }
@@ -1188,19 +1194,23 @@ function mergeMealItems(existing: ScheduleItem, incoming: ScheduleItem): Schedul
   };
 }
 
-function withoutRegionAndTransport(item: ScheduleItem): ScheduleItem {
+function withoutRegionAndTransport(item: ScheduleItem, preserveItemIds?: ReadonlySet<string>): ScheduleItem {
+  if (preserveItemIds?.has(item.id)) return item;
   const next = { ...item };
   delete next.region;
   delete next.transport;
   return next;
 }
 
-function stripRegionAndTransportFromData(data: ItineraryData): ItineraryData {
+function stripRegionAndTransportFromData(
+  data: ItineraryData,
+  preserveItemIds?: ReadonlySet<string>,
+): ItineraryData {
   return {
     ...data,
     days: data.days.map((day) => ({
       ...day,
-      items: day.items.map(withoutRegionAndTransport),
+      items: day.items.map((item) => withoutRegionAndTransport(item, preserveItemIds)),
     })),
   };
 }
@@ -1578,6 +1588,7 @@ function isMetaOnlyScheduleText(value: string): boolean {
   const text = cleanText(value).replace(/^['"`]+/u, "");
   const compact = compactText(text);
   if (!compact) return true;
+  if (isEditablePreviewSectionHeader(text)) return true;
   if (isStructuredHeaderLine(text)) return true;
   if (isSummaryTrailerLine(text)) return true;
   if (/^\d+\.\s*(?:출발일|인원|차량|호텔|포함|불포함|비고|지상비)\s*(?:[:：]|\s+)/u.test(text)) return true;
@@ -2872,9 +2883,35 @@ function directTypedScheduleItem(line: string): ScheduleItem | null {
   if (!matched?.[1] || !matched[2]) return null;
 
   const label = matched[1];
-  const body = cleanText(matched[2]);
-  const time = /(?:^|\|)\s*시간\s*=\s*([^|]+)/u.exec(body)?.[1];
-  const content = cleanText(body.replace(/(?:^|\|)\s*시간\s*=\s*[^|]+/gu, "").replace(/^\|/u, ""));
+  const segments = matched[2]
+    .split(/\s*\|\s*/u)
+    .map((segment) => cleanText(segment))
+    .filter(Boolean);
+  let region = "";
+  let transport = "";
+  let time = "";
+  const contentSegments: string[] = [];
+
+  for (const segment of segments) {
+    const regionValue = /^(?:지역|도시|region)\s*=\s*(.+)$/iu.exec(segment)?.[1];
+    if (regionValue) {
+      region = cleanText(regionValue);
+      continue;
+    }
+    const transportValue = /^(?:교통편|교통|차량|transport|transit)\s*=\s*(.+)$/iu.exec(segment)?.[1];
+    if (transportValue) {
+      transport = cleanText(transportValue);
+      continue;
+    }
+    const timeValue = /^(?:시간|time)\s*=\s*(.+)$/iu.exec(segment)?.[1];
+    if (timeValue) {
+      time = cleanText(timeValue);
+      continue;
+    }
+    contentSegments.push(segment);
+  }
+
+  const content = cleanText(contentSegments.join(" | "));
   if (!content) return null;
 
   if (label === "식사") {
@@ -2885,7 +2922,9 @@ function directTypedScheduleItem(line: string): ScheduleItem | null {
       id: randomUUID(),
       type: "MEAL",
       content: mealValue,
-      ...(time ? { time: cleanText(time) } : {}),
+      ...(region ? { region } : {}),
+      ...(transport ? { transport } : {}),
+      ...(time ? { time } : {}),
       ...(slot ? { mealSlot: slot, meal: { [slot]: mealValue } } : {}),
     };
   }
@@ -2904,9 +2943,15 @@ function directTypedScheduleItem(line: string): ScheduleItem | null {
     type,
     content: split.content,
     ...(split.detail ? { detail: split.detail } : {}),
-    ...(time ? { time: cleanText(time) } : {}),
+    ...(region ? { region } : {}),
+    ...(transport ? { transport } : {}),
+    ...(time ? { time } : {}),
     ...(type === "ACCOMMODATION" ? { hotel: split.content } : {}),
   };
+}
+
+function hasExplicitRegionTransportMeta(line: string): boolean {
+  return /(?:^|\|)\s*(?:지역|도시|region|교통편|교통|차량|transport|transit)\s*=/iu.test(line);
 }
 
 function parseFallbackFromRaw(rawText: string, title?: string): ItineraryData {
@@ -2925,6 +2970,7 @@ function parseFallbackFromRaw(rawText: string, title?: string): ItineraryData {
   const dayDateByNo = new Map<number, string>();
   const seenByDay = new Map<number, Set<string>>();
   const mealIndexByDay = new Map<number, Map<string, number>>();
+  const explicitRegionTransportItemIds = new Set<string>();
   let currentDayNo = 1;
   let currentRegion = "";
   let currentTransport = "";
@@ -3163,6 +3209,9 @@ function parseFallbackFromRaw(rawText: string, title?: string): ItineraryData {
     if (!line.includes("|") && /일정표$/u.test(line)) continue;
 
     if (directTypedItem) {
+      if (hasExplicitRegionTransportMeta(itemLine)) {
+        explicitRegionTransportItemIds.add(directTypedItem.id);
+      }
       pushItem(currentDayNo, directTypedItem);
       continue;
     }
@@ -3344,7 +3393,8 @@ function parseFallbackFromRaw(rawText: string, title?: string): ItineraryData {
     mergeRawHotelItems(
       mergeItineraryWithMeta(normalized, extractMetaFromRaw(rawText, title, normalized.days)),
       rawText,
-    )
+    ),
+    explicitRegionTransportItemIds,
   );
 }
 
