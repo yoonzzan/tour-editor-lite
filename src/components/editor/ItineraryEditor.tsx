@@ -155,12 +155,8 @@ export function ItineraryEditor() {
   const { header, overview, basics, days } = itinerary;
   const summaryNotes = { ...EMPTY_SUMMARY_NOTES, ...basics.summaryNotes };
 
-  // 총금액 자동 계산
   const { adult, child, infant } = overview.passengers;
-  const { adultPerPerson, childPerPerson, infantPerPerson } = overview.fare;
   const passengerTotal = adult + child + infant;
-  const autoTotal =
-    adult * adultPerPerson + child * childPerPerson + infant * infantPerPerson;
 
   function handleDayDragEnd(event: DragEndEvent) {
     const { active, over } = event;
@@ -407,48 +403,75 @@ export function ItineraryEditor() {
         <h2 className="mb-3 hub-section-title">
           여행요금
         </h2>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-          {(
-            [
-              { key: "adultPerPerson", label: "성인 1인" },
-              { key: "childPerPerson", label: "아동 1인" },
-              { key: "infantPerPerson", label: "유아 1인" },
-            ] as const
-          ).map(({ key, label }) => (
-            <div key={key} className="flex flex-col gap-1">
-              <label htmlFor={`fare-${key}`} className="text-xs text-muted-foreground">
-                {label} (원)
-              </label>
-              <input
-                id={`fare-${key}`}
-                type="text"
-                inputMode="numeric"
-                value={formatIntegerInputValue(overview.fare[key])}
-                onChange={(e) => {
-                  const nextValue = readNonNegativeInput(e.currentTarget);
-                  updateOverview((currentOverview) => {
-                    const nextFare = {
-                      ...currentOverview.fare,
-                      [key]: nextValue,
-                    };
-                    return {
+        <div className="flex flex-col gap-3">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+            {(
+              [
+                { key: "adultPerPerson", label: "성인 1인" },
+                { key: "childPerPerson", label: "아동 1인" },
+                { key: "infantPerPerson", label: "유아 1인" },
+              ] as const
+            ).map(({ key, label }) => (
+              <div key={key} className="flex flex-col gap-1">
+                <label htmlFor={`fare-${key}`} className="text-xs text-muted-foreground">
+                  {label} (원)
+                </label>
+                <input
+                  id={`fare-${key}`}
+                  type="text"
+                  inputMode="numeric"
+                  value={formatIntegerInputValue(overview.fare[key])}
+                  onChange={(e) => {
+                    const nextValue = readNonNegativeInput(e.currentTarget);
+                    updateOverview((currentOverview) => {
+                      const nextFare = {
+                        ...currentOverview.fare,
+                        [key]: nextValue,
+                      };
+                      return {
+                        ...currentOverview,
+                        fare: {
+                          ...nextFare,
+                          total: calculateFareTotal(currentOverview.passengers, nextFare),
+                        },
+                      };
+                    });
+                  }}
+                  className="hub-input text-right"
+                />
+              </div>
+            ))}
+          </div>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            {(
+              [
+                { key: "total", label: "총금액" },
+                { key: "totalWithCard", label: "카드결제시 금액" },
+              ] as const
+            ).map(({ key, label }) => (
+              <div key={key} className="flex flex-col gap-1">
+                <label htmlFor={`fare-${key}`} className="text-xs text-muted-foreground">
+                  {label} (원)
+                </label>
+                <input
+                  id={`fare-${key}`}
+                  type="text"
+                  inputMode="numeric"
+                  value={formatIntegerInputValue(overview.fare[key])}
+                  onChange={(e) => {
+                    const nextValue = readNonNegativeInput(e.currentTarget);
+                    updateOverview((currentOverview) => ({
                       ...currentOverview,
                       fare: {
-                        ...nextFare,
-                        total: calculateFareTotal(currentOverview.passengers, nextFare),
+                        ...currentOverview.fare,
+                        [key]: nextValue,
                       },
-                    };
-                  });
-                }}
-                className="hub-input text-right"
-              />
-            </div>
-          ))}
-          <div className="flex flex-col gap-1">
-            <label className="text-xs text-muted-foreground">총금액 (자동계산)</label>
-            <div className="hub-input items-center justify-end bg-muted/40 text-right font-medium">
-              {autoTotal.toLocaleString()} 원
-            </div>
+                    }));
+                  }}
+                  className="hub-input text-right font-medium"
+                />
+              </div>
+            ))}
           </div>
         </div>
       </section>
