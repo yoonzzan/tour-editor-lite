@@ -810,30 +810,32 @@ export function SearchPopup({ onClose }: Props) {
 
     return (
       <div className="hub-section p-3">
-        <div className="mb-3 border border-primary/30 bg-primary/10 p-3">
-          <p className="text-[12.5px] font-semibold text-foreground">
-            조회된 일정 요약을 확인하세요.
-          </p>
-          <p className="mt-1 text-[12.5px] leading-[18px] text-muted-foreground">
-            그대로 반영하려면 일정 반영을 누르세요. 일부 문구만 수정하려면 아래 요약을 직접 입력 탭으로 보내서 수정한 뒤 불러오세요.
-          </p>
-          <div className="mt-2 flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => void handleCopyPreviewText()}
-              className="hub-btn hub-btn-custom h-[31px] px-2"
-            >
-              요약 복사
-            </button>
-            <button
-              type="button"
-              onClick={handleUseDirectInput}
-              className="hub-btn hub-btn-custom h-[31px] px-2"
-            >
-              직접 입력에서 수정
-            </button>
+        {visibleImportPreview?.sourceTab !== "direct" && (
+          <div className="mb-3 border border-primary/30 bg-primary/10 p-3">
+            <p className="text-[12.5px] font-semibold text-foreground">
+              조회된 일정 요약을 확인하세요.
+            </p>
+            <p className="mt-1 text-[12.5px] leading-[18px] text-muted-foreground">
+              그대로 반영하려면 일정 반영을 누르세요. 일부 문구만 수정하려면 아래 요약을 직접 입력 탭으로 보내서 수정한 뒤 불러오세요.
+            </p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => void handleCopyPreviewText()}
+                className="hub-btn hub-btn-custom h-[31px] px-2"
+              >
+                요약 복사
+              </button>
+              <button
+                type="button"
+                onClick={handleUseDirectInput}
+                className="hub-btn hub-btn-custom h-[31px] px-2"
+              >
+                직접 입력에서 수정
+              </button>
+            </div>
           </div>
-        </div>
+        )}
         <div className="mb-3 flex items-start justify-between gap-2">
           <div>
             <p className="text-[12.5px] font-semibold text-foreground">

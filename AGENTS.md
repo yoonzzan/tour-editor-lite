@@ -55,6 +55,7 @@
 # 2026-04-21 — `npx tsx`로 전역 실행기를 사용했다가 네트워크 제한으로 실패 → 로컬 의존성에서 가능한 실행 경로(`node_modules`) 우선 사용, 네트워크 필요 명령은 사용자에게 승인 요청 후 실행
 # 2026-04-24 — `git status --short`를 `.git` 루트 확인 없이 실행해서 실패 → Git 명령 전 저장소 여부를 먼저 확인하고, 저장소가 아니면 Git 상태 확인을 생략
 # 2026-05-13 — 어두운 스크림 위에서 모달에 `box-shadow`를 주면 가장자리가 밝게 번져 보임 → 에디터 다이얼로그는 `shadow-none` + `border`; `shadow-popover` 문자열은 `src/components/editor/**`, `src/app/(popup)/**` TSX에서 금지(`scripts/quality-gate.sh` 검사)
+# 2026-05-19 — 조밀한 TSX 모달 수정 중 닫는 태그 구조가 깨져 파싱 에러 발생 → 모달/레이아웃 TSX 수정 직후 typecheck 또는 focused parser check를 먼저 실행
 
 ## Forbidden Patterns
 - `quoteVersion.update(...)` — 버전 레코드 수정 금지

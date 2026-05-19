@@ -34,6 +34,18 @@ type QuoteResponseInputMode = "text" | "image";
 
 const QUOTE_RESPONSE_IMAGE_ACCEPT = "image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp";
 const QUOTE_RESPONSE_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
+const QUOTE_RESPONSE_TEXT_PLACEHOLDER = [
+  "최종합계 1,650,000원",
+  "환율기준 USD 1,350",
+  "항공 요금 955,000원 항공료 830,000 TAX 125,000 합계 955,000",
+  "지상 요금 520,000원 지상비 520,000 합계 520,000",
+  "공동 경비 요금 43,000원 보험료 8,000 FOC 35,000 합계 43,000",
+  "",
+  "성인 25+아동 3",
+  "[식사]",
+  "2일차 중식 현지식$10 / 석식 한식$10",
+  "3일차 중식 한식$10 / 석식 현지식$10",
+].join("\n");
 
 type QuoteResponsePreview = QuoteResponseParseResult & {
   exchangeRates: QuoteExchangeRate[];
@@ -493,20 +505,20 @@ export function QuoteEditor({ role }: Props) {
           )}
 
           {/* 자동 생성 버튼 */}
-          {itinerary && (
-            <button
-              onClick={handleAutoGenerate}
-              className="hub-btn hub-btn-custom"
-            >
-              일정에서 자동 생성
-            </button>
-          )}
+          <button
+            onClick={handleAutoGenerate}
+            disabled={!itinerary}
+            className="hub-btn hub-btn-custom disabled:opacity-40"
+            title={!itinerary ? "일정을 먼저 불러오세요" : undefined}
+          >
+            일정에서 자동 생성
+          </button>
           <button
             type="button"
             onClick={openQuoteResponseImport}
             className="hub-btn hub-btn-primary"
           >
-            견적답변 자동입력
+            견적답변 불러오기
           </button>
         </div>
       </div>
@@ -833,6 +845,97 @@ interface QuoteResponseImportModalProps {
   onClose: () => void;
 }
 
+function QuoteResponseProgressOverlay({ mode }: { mode: QuoteResponseInputMode }) {
+  const stages = [
+    { key: "received", label: "확인" },
+    { key: "extracting", label: "읽기" },
+    { key: "analyzing", label: "파악" },
+    { key: "completed", label: "정리" },
+  ];
+  const activeIndex = mode === "image" ? 1 : 2;
+
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="absolute inset-0 z-10 flex items-center justify-center bg-background/90 px-6 backdrop-blur-[1px]"
+    >
+      <div className="flex w-full max-w-md flex-col items-center gap-5 text-center">
+        <svg aria-hidden="true" viewBox="0 0 112 112" className="h-24 w-24 text-primary">
+          <defs>
+            <filter id="quote-response-progress-glow" x="-40%" y="-40%" width="180%" height="180%">
+              <feGaussianBlur stdDeviation="3" result="blur" />
+              <feMerge>
+                <feMergeNode in="blur" />
+                <feMergeNode in="SourceGraphic" />
+              </feMerge>
+            </filter>
+          </defs>
+          <circle cx="56" cy="56" r="34" fill="currentColor" opacity="0.08" className="animate-pulse" />
+          <g className="origin-center animate-spin" style={{ animationDuration: "1.8s" }}>
+            <path
+              d="M56 16a40 40 0 0 1 39 31"
+              fill="none"
+              stroke="currentColor"
+              strokeLinecap="round"
+              strokeWidth="4"
+              filter="url(#quote-response-progress-glow)"
+            />
+            <circle cx="96" cy="56" r="4" fill="currentColor" />
+          </g>
+          <g className="origin-center animate-spin" style={{ animationDuration: "3.2s", animationDirection: "reverse" }}>
+            <path
+              d="M28 28a40 40 0 0 0-8 49"
+              fill="none"
+              stroke="currentColor"
+              strokeLinecap="round"
+              strokeWidth="2"
+              strokeOpacity="0.45"
+            />
+            <circle cx="23" cy="75" r="3" fill="currentColor" opacity="0.7" />
+          </g>
+          <path
+            d="M42 58h28M42 46h22M42 70h18"
+            fill="none"
+            stroke="currentColor"
+            strokeLinecap="round"
+            strokeWidth="4"
+            strokeOpacity="0.75"
+          />
+        </svg>
+        <div className="flex flex-col gap-2">
+          <p className="text-[14px] font-bold text-foreground">
+            견적답변을 분석하고 있습니다.
+          </p>
+          <p className="text-[12.5px] leading-[18px] text-muted-foreground">
+            {mode === "image"
+              ? "스크린샷의 견적답변을 읽고 미리보기를 준비하고 있습니다."
+              : "입력한 견적답변을 견적 행으로 정리하고 있습니다."}
+          </p>
+        </div>
+        <div className="flex items-center justify-center gap-3" aria-hidden="true">
+          {stages.map((step, index) => {
+            const isDone = index < activeIndex;
+            const isActive = index === activeIndex;
+            return (
+              <div key={step.key} className="flex flex-col items-center gap-1.5">
+                <span
+                  className={`h-2.5 w-2.5 rounded-full transition-colors ${
+                    isDone || isActive ? "bg-primary" : "bg-muted-foreground/25"
+                  } ${isActive ? "animate-pulse" : ""}`}
+                />
+                <span className={`text-[11.5px] ${isDone || isActive ? "text-foreground" : "text-muted-foreground"}`}>
+                  {step.label}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function QuoteResponseImportModal({
   text,
   mode,
@@ -852,6 +955,7 @@ function QuoteResponseImportModal({
   onClose,
 }: QuoteResponseImportModalProps) {
   const [isImageDragActive, setIsImageDragActive] = useState(false);
+  const imageInputRef = useRef<HTMLInputElement>(null);
   const displayRateCodes = new Set(preview?.diagnostics.requiredCurrencyCodes ?? []);
   const summaryRate = preview?.diagnostics.raw.summary.untAmt ?? 0;
   const summaryRateCode = preview?.diagnostics.raw.summary.currKndCd;
@@ -889,16 +993,23 @@ function QuoteResponseImportModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden border border-border bg-white shadow-none">
-        <div className="flex items-center justify-between border-b border-border px-4 py-3">
-          <h3 className="text-[13px] font-semibold text-foreground">견적답변 자동입력</h3>
+    <div className="fixed inset-0 z-modal-backdrop flex items-center justify-center bg-[rgba(0,0,0,0.45)] p-4">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="quote-response-import-title"
+        className="hub-dialog relative z-modal flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden"
+      >
+        <div className="hub-dialog-head shrink-0">
+          <h3 id="quote-response-import-title" className="text-[13px] font-bold leading-5">
+            견적답변 불러오기
+          </h3>
           <button
             type="button"
             onClick={onClose}
             disabled={loading}
             aria-label="닫기"
-            className="hub-btn-text px-2 text-muted-foreground disabled:opacity-50"
+            className="hub-btn-text px-2 text-chrome-sidebar-foreground hover:bg-chrome-sidebar-hover disabled:opacity-50"
           >
             ✕
           </button>
@@ -919,58 +1030,73 @@ function QuoteResponseImportModal({
                       : "bg-white text-muted-foreground hover:bg-muted/30"
                   }`}
                 >
-                  {nextMode === "text" ? "텍스트" : "이미지 캡처"}
+                  {nextMode === "text" ? "텍스트" : "스크린샷 첨부"}
                 </button>
               ))}
             </div>
 
             {mode === "image" && (
-              <div
-                onDragEnter={(event) => {
-                  event.preventDefault();
-                  if (!loading) setIsImageDragActive(true);
-                }}
-                onDragOver={(event) => {
-                  event.preventDefault();
-                  if (!loading) event.dataTransfer.dropEffect = "copy";
-                }}
-                onDragLeave={(event) => {
-                  event.preventDefault();
-                  if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
-                  setIsImageDragActive(false);
-                }}
-                onDrop={(event) => {
-                  event.preventDefault();
-                  setIsImageDragActive(false);
-                  if (loading) return;
-                  handleImageFileChange(event.dataTransfer.files.item(0));
-                }}
-                className={`grid gap-2 border border-dashed p-3 ${
-                  isImageDragActive
-                    ? "border-primary bg-primary/10"
-                    : "border-grid-border bg-muted/20"
-                }`}
-              >
-                <label htmlFor="quote-response-image" className="text-[12.5px] font-medium text-foreground">
-                  캡처 이미지
-                </label>
+              <>
+                <div
+                  role="region"
+                  aria-label="스크린샷 이미지 파일 드롭 영역"
+                  onDragEnter={(event) => {
+                    event.preventDefault();
+                    if (!loading) setIsImageDragActive(true);
+                  }}
+                  onDragOver={(event) => {
+                    event.preventDefault();
+                    if (!loading) event.dataTransfer.dropEffect = "copy";
+                  }}
+                  onDragLeave={(event) => {
+                    event.preventDefault();
+                    if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+                    setIsImageDragActive(false);
+                  }}
+                  onDrop={(event) => {
+                    event.preventDefault();
+                    setIsImageDragActive(false);
+                    if (loading) return;
+                    handleImageFileChange(event.dataTransfer.files.item(0));
+                  }}
+                  onClick={() => {
+                    if (!loading) imageInputRef.current?.click();
+                  }}
+                  className={`flex min-h-[160px] cursor-pointer flex-col items-center justify-center gap-3 border-2 border-dashed transition-colors ${
+                    isImageDragActive
+                      ? "border-primary bg-primary/5"
+                      : "border-border bg-muted/20 hover:border-muted-foreground/50"
+                  }`}
+                >
+                  <span className="text-2xl select-none">📎</span>
+                  <p className="text-[12.5px] text-muted-foreground">
+                    스크린샷 이미지 파일을 여기에 드래그하거나 클릭하여 선택하세요
+                  </p>
+                  <p className="text-[11.5px] text-muted-foreground">PNG, JPG, WEBP</p>
+                </div>
                 <input
+                  ref={imageInputRef}
                   id="quote-response-image"
                   type="file"
                   accept={QUOTE_RESPONSE_IMAGE_ACCEPT}
                   onChange={(event) => handleImageFileChange(event.currentTarget.files?.[0] ?? null)}
                   disabled={loading}
-                  className="text-[12.5px] text-foreground file:mr-3 file:border file:border-border file:bg-white file:px-3 file:py-1.5 file:text-[12px] file:font-medium disabled:opacity-50"
+                  className="hidden"
+                  aria-label="스크린샷 이미지 파일 선택"
                 />
-                <span className="text-[11.5px] leading-4 text-muted-foreground">
-                  파일을 이 영역으로 끌어오면 바로 첨부됩니다.
-                </span>
+
                 {image && (
-                  <span className="truncate text-[11.5px] text-muted-foreground">
-                    {image.name}
-                  </span>
+                  <div className="border border-grid-border bg-muted/40 px-3 py-2">
+                    <p className="truncate text-[12.5px] text-foreground">{image.name}</p>
+                  </div>
                 )}
-              </div>
+
+                {!image && (
+                  <p className="text-[12.5px] text-muted-foreground">
+                    스크린샷 이미지 파일을 첨부하면 OCR 텍스트를 자동으로 채웁니다.
+                  </p>
+                )}
+              </>
             )}
 
             <label htmlFor="quote-response-text" className="text-[12.5px] font-medium text-foreground">
@@ -980,7 +1106,7 @@ function QuoteResponseImportModal({
               id="quote-response-text"
               value={text}
               onChange={(event) => onTextChange(event.target.value)}
-              placeholder="[식사]&#10;2일차 중식 현지식$10 / 석식 한식$10&#10;&#10;성인 25+아동 3 헤난 가든 인당 성인 $450 / 아동 $160"
+              placeholder={QUOTE_RESPONSE_TEXT_PLACEHOLDER}
               className="min-h-[260px] flex-1 resize-none border border-input bg-white px-3 py-2 text-[12.5px] leading-5 text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
             />
             {error && (
@@ -995,7 +1121,14 @@ function QuoteResponseImportModal({
                 disabled={loading || (mode === "image" ? !image : !text.trim())}
                 className="hub-btn hub-btn-primary disabled:opacity-50"
               >
-                {loading ? "분석 중..." : mode === "image" ? "OCR 후 미리보기" : "미리보기 생성"}
+                {loading ? (
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="h-3 w-3 rounded-full border-2 border-current border-r-transparent animate-spin" />
+                    분석 중...
+                  </span>
+                ) : (
+                  "미리보기 생성"
+                )}
               </button>
             </div>
           </section>
@@ -1133,6 +1266,7 @@ function QuoteResponseImportModal({
             현재 견적서에 적용
           </button>
         </div>
+        {loading && <QuoteResponseProgressOverlay mode={mode} />}
       </div>
     </div>
   );
