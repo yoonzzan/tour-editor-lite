@@ -29,4 +29,8 @@ export const config = {
     baseUrl: optionalEnv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
     parseTimeoutMs: Number(optionalEnv("OPENAI_PARSE_TIMEOUT_MS", "30000")),
   },
+  quoteOcr: {
+    pythonBin: optionalEnv("QUOTE_RESPONSE_OCR_PYTHON_BIN", "python3"),
+    timeoutMs: Number(optionalEnv("QUOTE_RESPONSE_OCR_TIMEOUT_MS", "60000")),
+  },
 } as const;

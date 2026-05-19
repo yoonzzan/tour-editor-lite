@@ -10,6 +10,7 @@
     "lint": "next lint",
     "lint:fix": "next lint --fix",
     "test": "vitest run",
+    "test:quote-response": "vitest run src/lib/quote/responseParser.test.ts src/lib/quote/responseTemplate.test.ts src/app/api/quote-response/parse/route.test.ts",
     "test:watch": "vitest",
     "quality": "bash scripts/quality-gate.sh"
   },

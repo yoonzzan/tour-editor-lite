@@ -74,11 +74,20 @@ src/app/api/editor/             ← 초기화 API
 src/app/api/quotes/             ← 견적 CRUD
 src/app/api/versions/           ← 버전 관리
 src/app/api/mcp/products/       ← MCP 상품 조회
+src/app/api/quote-response/     ← 견적답변 텍스트/OCR 파싱 API
 src/components/editor/          ← 에디터 컴포넌트
 src/lib/version/                ← 버전 생성 로직 (핵심)
 src/lib/excel/                  ← Excel 출력 로직
+src/lib/quote/responseParser.ts ← 견적답변 필드/금액/식사/환율 파싱
+src/lib/quote/responseOcr.ts    ← 로컬 PaddleOCR 실행 래퍼
 src/mocks/                      ← Mock 데이터 (항공·원가)
 ```
+
+## 견적답변 자동가져오기
+- 흐름: 텍스트/이미지 OCR 입력 → `/api/quote-response/parse` → `src/lib/quote/responseParser.ts` → 미리보기 후 견적 행 적용
+- 이미지 OCR은 로컬 PaddleOCR 실행(`scripts/quote-response-ocr.py`)을 사용한다
+- OCR 설정은 `QUOTE_RESPONSE_OCR_PYTHON_BIN`, `QUOTE_RESPONSE_OCR_TIMEOUT_MS`로 관리한다
+- API 그리드 금액은 확정 기본 행, 불포함/조건부/추가 시 금액은 기본 행 제외로 취급한다
 
 ---
 

@@ -30,6 +30,10 @@
 - 일정표와 견적서는 항상 같은 버전 번호를 가진다 (분리 저장 금지)
 - 동일 일차에 동일 구분(관광, 이동 등) 항목 여러 개 허용 — 1개 제한하는 코드 금지
 - 모든 업무 날짜/표시 날짜 계산은 대한민국 기준(`Asia/Seoul`)으로 처리한다 — `src/lib/date/korea.ts` 유틸 우선 사용, `toISOString().slice(0, 10)`로 날짜 생성 금지
+- 견적답변 자동가져오기: API 그리드 금액은 확정 기본 행으로 반영하고, 불포함/조건부/추가 시 금액은 기본 견적 행으로 반영 금지
+- 견적답변 `1인당 예상수익`은 표시용 기본 행으로 유지하되 `agencyFee`, VAT, `groundProfit`에 중복 반영 금지
+- 견적답변 `환율기준`이 있으면 적용 외화 행이 남지 않아도 환율 영역을 유지하고, 환율 값이 채워진 상태에서는 stale 환율 경고 표시 금지
+- 견적답변 OCR은 `scripts/quote-response-ocr.py` 로컬 PaddleOCR 경로를 사용하며, 유료/외부 OCR API fallback 추가는 별도 승인 필요
 
 ## 파일 경계 규칙
 - API 인증: 모든 `src/app/api/**` 파일에 `getApiToken()` 또는 NextAuth handler 인증 체크 필수
