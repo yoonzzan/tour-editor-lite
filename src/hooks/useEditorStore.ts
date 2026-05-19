@@ -20,6 +20,8 @@ interface EditorState {
 
   /** SearchPopup에서 상품 선택 후 에디터 전체 교체 */
   loadFromProduct: (itinerary: ItineraryData) => void;
+  /** 일정표 없이 빈 견적서만 초기화 (마운트 시 1회, isDirty 유지) */
+  initializeEmptyQuote: () => void;
   /** 일정표 데이터 업데이트 */
   setItinerary: (itinerary: ItineraryData) => void;
   /** 견적서 데이터 업데이트 */
@@ -45,6 +47,21 @@ export const useEditorStore = create<EditorState>((set) => ({
           agencyFee: 0,
         }),
         isDirty: true,
+      };
+    }),
+
+  initializeEmptyQuote: () =>
+    set((s) => {
+      if (s.quote) return {};
+      const writtenAt = todayInKorea();
+      return {
+        quote: recalculateQuoteData({
+          header: { writtenAt, validUntil: writtenAt },
+          exchangeRates: [DEFAULT_EXCHANGE_RATE],
+          items: [],
+          groundProfit: 0,
+          agencyFee: 0,
+        }),
       };
     }),
 
