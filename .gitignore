@@ -14,6 +14,8 @@ build/
 CLAUDE.local.md
 
 # 로컬 에이전트/도구 상태
+.venv-ocr/
+.paddlex/
 .bkit/runtime/
 .bkit/snapshots/
 .bkit/state/

@@ -10,6 +10,7 @@
 import { useEffect, useRef, useState } from "react";
 import { v4 as uuidv4 } from "uuid";
 import { useEditorStore } from "@/hooks/useEditorStore";
+import { withAccessCodeHeaders } from "@/lib/converter/clientAccess";
 import {
   CATEGORY_LABELS,
   CATEGORY_ORDER,
@@ -17,6 +18,7 @@ import {
 } from "@/lib/quote/generate";
 import {
   DEFAULT_EXCHANGE_RATE_ID,
+  DEFAULT_EXCHANGE_RATE,
   calculateItemSubtotalKrw,
   getExchangeRateForItem,
   getQuoteExchangeRates,
@@ -25,8 +27,19 @@ import {
 } from "@/lib/quote/currency";
 import { todayInKorea } from "@/lib/date/korea";
 import { Role, type QuoteCategory, type QuoteExchangeRate, type QuoteItem } from "@/types";
+import type { QuoteResponseParseResult } from "@/lib/quote/responseParser";
 
 type PriceMode = "상세" | "총액" | "숨김";
+type QuoteResponseInputMode = "text" | "image";
+
+const QUOTE_RESPONSE_IMAGE_ACCEPT = "image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp";
+const QUOTE_RESPONSE_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
+
+type QuoteResponsePreview = QuoteResponseParseResult & {
+  exchangeRates: QuoteExchangeRate[];
+  ocrText?: string;
+  normalizedText?: string;
+};
 
 const CATEGORY_COLORS: Record<QuoteCategory, string> = {
   FLIGHT: "bg-blue-100 text-blue-700",
@@ -117,6 +130,13 @@ export function QuoteEditor({ role }: Props) {
     getQuoteExchangeRates(quote)
   );
   const [priceMode, setPriceMode] = useState<PriceMode>("상세");
+  const [quoteResponseOpen, setQuoteResponseOpen] = useState(false);
+  const [quoteResponseInputMode, setQuoteResponseInputMode] = useState<QuoteResponseInputMode>("text");
+  const [quoteResponseText, setQuoteResponseText] = useState("");
+  const [quoteResponseImage, setQuoteResponseImage] = useState<File | null>(null);
+  const [quoteResponseLoading, setQuoteResponseLoading] = useState(false);
+  const [quoteResponseError, setQuoteResponseError] = useState<string | null>(null);
+  const [quoteResponsePreview, setQuoteResponsePreview] = useState<QuoteResponsePreview | null>(null);
   // 스토어 값 동기화
   useEffect(() => {
     if (quote) {
@@ -233,6 +253,186 @@ export function QuoteEditor({ role }: Props) {
     scheduleWrite(generated, groundProfit, agencyFee, exchangeRates);
   }
 
+  function openQuoteResponseImport() {
+    setQuoteResponseOpen(true);
+    setQuoteResponseError(null);
+    setQuoteResponsePreview(null);
+  }
+
+  function closeQuoteResponseImport() {
+    if (quoteResponseLoading) return;
+    setQuoteResponseOpen(false);
+    setQuoteResponseError(null);
+  }
+
+  function buildQuoteResponseDayDates() {
+    return (itinerary?.days ?? []).map((day) => ({
+      dayNo: day.dayNo,
+      date: day.date,
+    }));
+  }
+
+  function withPreviewRequiredRates(parsed: QuoteResponseParseResult): QuoteResponsePreview {
+    const required = new Set(parsed.diagnostics.requiredCurrencyCodes);
+    const summaryRate = parsed.diagnostics.raw.summary.untAmt;
+    const summaryRateCode = parsed.diagnostics.raw.summary.currKndCd;
+    const inferredSummaryRateFor = (code: "USD" | "JPY") => {
+      if (summaryRate <= 1) return 0;
+      if (summaryRateCode === code) return summaryRate;
+      if (summaryRateCode === "KRW" && required.size === 1 && required.has(code)) return summaryRate;
+      return 0;
+    };
+    const rates = getQuoteExchangeRates(parsed.quote).map((rate) => {
+      if (rate.id === DEFAULT_EXCHANGE_RATE_ID) return rate;
+      if (required.has(rate.code as "USD" | "JPY")) {
+        const existing = exchangeRates.find((current) => current.code === rate.code);
+        const summaryDefault = inferredSummaryRateFor(rate.code as "USD" | "JPY");
+        return {
+          ...rate,
+          rateToKrw: summaryDefault || (existing && existing.rateToKrw > 1 ? existing.rateToKrw : 0),
+        };
+      }
+      return rate;
+    });
+    if (summaryRate > 1 && summaryRateCode !== "KRW" && !rates.some((rate) => rate.code === summaryRateCode)) {
+      rates.push({
+        id: summaryRateCode.toLowerCase(),
+        code: summaryRateCode,
+        rateToKrw: summaryRate,
+      });
+    }
+
+    return {
+      ...parsed,
+      exchangeRates: rates.length > 0 ? rates : [DEFAULT_EXCHANGE_RATE],
+    };
+  }
+
+  async function handleParseQuoteResponse() {
+    if (!quoteResponseText.trim()) {
+      setQuoteResponseError("견적답변 텍스트를 입력해 주세요.");
+      return;
+    }
+
+    setQuoteResponseLoading(true);
+    setQuoteResponseError(null);
+    setQuoteResponsePreview(null);
+    try {
+      const response = await fetch("/api/quote-response/parse", {
+        method: "POST",
+        headers: withAccessCodeHeaders({ "content-type": "application/json" }),
+        body: JSON.stringify({
+          text: quoteResponseText,
+          dayDates: buildQuoteResponseDayDates(),
+          passengerCount,
+          quoteHeader,
+        }),
+      });
+      const payload = (await response.json()) as Partial<QuoteResponseParseResult> & { error?: string };
+      if (!response.ok || !payload.quote || !payload.diagnostics || !payload.extractedText) {
+        throw new Error(payload.error ?? "견적답변을 파싱하지 못했습니다.");
+      }
+      setQuoteResponsePreview(withPreviewRequiredRates(payload as QuoteResponseParseResult));
+    } catch (error) {
+      setQuoteResponseError(error instanceof Error ? error.message : "견적답변을 파싱하지 못했습니다.");
+    } finally {
+      setQuoteResponseLoading(false);
+    }
+  }
+
+  async function handleParseQuoteResponseImage() {
+    if (!quoteResponseImage) {
+      setQuoteResponseError("OCR 처리할 이미지 파일을 선택해 주세요.");
+      return;
+    }
+
+    setQuoteResponseLoading(true);
+    setQuoteResponseError(null);
+    setQuoteResponsePreview(null);
+    try {
+      const formData = new FormData();
+      formData.append("image", quoteResponseImage);
+      formData.append("dayDates", JSON.stringify(buildQuoteResponseDayDates()));
+      formData.append("passengerCount", String(passengerCount));
+      formData.append("quoteHeader", JSON.stringify(quoteHeader));
+
+      const response = await fetch("/api/quote-response/parse", {
+        method: "POST",
+        headers: withAccessCodeHeaders(),
+        body: formData,
+      });
+      const payload = (await response.json()) as Partial<QuoteResponsePreview> & { error?: string };
+      if (!response.ok || !payload.quote || !payload.diagnostics || !payload.extractedText) {
+        throw new Error(payload.error ?? "이미지 견적답변을 분석하지 못했습니다.");
+      }
+      setQuoteResponseText(payload.normalizedText ?? payload.extractedText);
+      setQuoteResponsePreview(withPreviewRequiredRates(payload as QuoteResponseParseResult));
+    } catch (error) {
+      setQuoteResponseError(error instanceof Error ? error.message : "이미지 견적답변을 분석하지 못했습니다.");
+    } finally {
+      setQuoteResponseLoading(false);
+    }
+  }
+
+  function handleQuoteResponseRateChange(rateId: string, value: number) {
+    setQuoteResponsePreview((preview) => {
+      if (!preview) return preview;
+      return {
+        ...preview,
+        exchangeRates: preview.exchangeRates.map((rate) =>
+          rate.id === rateId ? { ...rate, rateToKrw: value } : rate
+        ),
+      };
+    });
+  }
+
+  function handleQuoteResponseBulkQuantityChange(value: number) {
+    const quantity = Math.max(1, Math.round(value));
+    setQuoteResponsePreview((preview) => {
+      if (!preview) return preview;
+      const nextItems = preview.quote.items.map((item) => ({
+        ...item,
+        quantity,
+      }));
+      return {
+        ...preview,
+        quote: recalculateQuoteData({
+          header: preview.quote.header,
+          items: nextItems,
+          exchangeRates: preview.exchangeRates,
+          groundProfit: preview.quote.summary.groundProfit,
+          agencyFee: preview.quote.summary.agencyFee,
+        }),
+      };
+    });
+  }
+
+  function canApplyQuoteResponsePreview(preview: QuoteResponsePreview): boolean {
+    return preview.diagnostics.requiredCurrencyCodes.every((code) => {
+      const rate = preview.exchangeRates.find((entry) => entry.code === code);
+      return Boolean(rate && rate.rateToKrw > 0);
+    });
+  }
+
+  function handleApplyQuoteResponse() {
+    if (!quoteResponsePreview || !canApplyQuoteResponsePreview(quoteResponsePreview)) return;
+
+    const nextQuote = recalculateQuoteData({
+      header: quoteResponsePreview.quote.header,
+      items: quoteResponsePreview.quote.items,
+      exchangeRates: quoteResponsePreview.exchangeRates,
+      groundProfit: quoteResponsePreview.quote.summary.groundProfit,
+      agencyFee: quoteResponsePreview.quote.summary.agencyFee,
+    });
+    setLocalItems(nextQuote.items);
+    setGroundProfit(nextQuote.summary.groundProfit);
+    setAgencyFee(nextQuote.summary.agencyFee);
+    setExchangeRates(getQuoteExchangeRates(nextQuote));
+    setQuote(nextQuote);
+    setQuoteResponseOpen(false);
+    setQuoteResponsePreview(null);
+  }
+
   function handleAddRow(category: QuoteCategory) {
     const newItem: QuoteItem = {
       id: uuidv4(),
@@ -301,6 +501,13 @@ export function QuoteEditor({ role }: Props) {
               일정에서 자동 생성
             </button>
           )}
+          <button
+            type="button"
+            onClick={openQuoteResponseImport}
+            className="hub-btn hub-btn-primary"
+          >
+            견적답변 자동입력
+          </button>
         </div>
       </div>
 
@@ -572,6 +779,361 @@ export function QuoteEditor({ role }: Props) {
           )}
         </section>
       )}
+
+      {quoteResponseOpen && (
+        <QuoteResponseImportModal
+          text={quoteResponseText}
+          mode={quoteResponseInputMode}
+          image={quoteResponseImage}
+          loading={quoteResponseLoading}
+          error={quoteResponseError}
+          preview={quoteResponsePreview}
+          onModeChange={(mode) => {
+            setQuoteResponseInputMode(mode);
+            setQuoteResponseError(null);
+          }}
+          onTextChange={(value) => {
+            setQuoteResponseText(value);
+            if (quoteResponsePreview) setQuoteResponsePreview(null);
+          }}
+          onImageChange={(file) => {
+            setQuoteResponseImage(file);
+            setQuoteResponseError(null);
+            if (quoteResponsePreview) setQuoteResponsePreview(null);
+          }}
+          onParse={() => void handleParseQuoteResponse()}
+          onParseImage={() => void handleParseQuoteResponseImage()}
+          onRateChange={handleQuoteResponseRateChange}
+          onBulkQuantityChange={handleQuoteResponseBulkQuantityChange}
+          canApply={quoteResponsePreview ? canApplyQuoteResponsePreview(quoteResponsePreview) : false}
+          onApply={handleApplyQuoteResponse}
+          onClose={closeQuoteResponseImport}
+        />
+      )}
+    </div>
+  );
+}
+
+interface QuoteResponseImportModalProps {
+  text: string;
+  mode: QuoteResponseInputMode;
+  image: File | null;
+  loading: boolean;
+  error: string | null;
+  preview: QuoteResponsePreview | null;
+  canApply: boolean;
+  onModeChange: (mode: QuoteResponseInputMode) => void;
+  onTextChange: (value: string) => void;
+  onImageChange: (file: File | null) => void;
+  onParse: () => void;
+  onParseImage: () => void;
+  onRateChange: (rateId: string, value: number) => void;
+  onBulkQuantityChange: (value: number) => void;
+  onApply: () => void;
+  onClose: () => void;
+}
+
+function QuoteResponseImportModal({
+  text,
+  mode,
+  image,
+  loading,
+  error,
+  preview,
+  canApply,
+  onModeChange,
+  onTextChange,
+  onImageChange,
+  onParse,
+  onParseImage,
+  onRateChange,
+  onBulkQuantityChange,
+  onApply,
+  onClose,
+}: QuoteResponseImportModalProps) {
+  const [isImageDragActive, setIsImageDragActive] = useState(false);
+  const displayRateCodes = new Set(preview?.diagnostics.requiredCurrencyCodes ?? []);
+  const summaryRate = preview?.diagnostics.raw.summary.untAmt ?? 0;
+  const summaryRateCode = preview?.diagnostics.raw.summary.currKndCd;
+  if (summaryRate > 1 && summaryRateCode && summaryRateCode !== "KRW") {
+    displayRateCodes.add(summaryRateCode);
+  }
+  const previewRates = preview?.exchangeRates ?? [];
+  const displayItems = preview?.quote.items ?? [];
+  const bulkQuantityValue =
+    displayItems.length > 0 && displayItems.every((item) => item.quantity === displayItems[0]?.quantity)
+      ? formatIntegerInputValue(displayItems[0]?.quantity ?? 1)
+      : "";
+  const hasPreviewMissingRate = displayItems.some((item) => {
+    const rate = getExchangeRateForItem(previewRates, item);
+    return rate.id !== DEFAULT_EXCHANGE_RATE_ID && rate.rateToKrw <= 0;
+  });
+  const previewItemsTotal = hasPreviewMissingRate
+    ? 0
+    : displayItems.reduce((sum, item) => sum + calculateItemSubtotalKrw(item, previewRates), 0);
+  const previewTotal = preview
+    ? previewItemsTotal + preview.quote.summary.groundProfit + preview.quote.summary.agencyFee + preview.quote.summary.vat
+    : 0;
+  const displayWarnings = (preview?.diagnostics.warnings ?? []).filter((warning) => {
+    if (!/환율 입력이 필요합니다/u.test(warning)) return true;
+    return hasPreviewMissingRate;
+  });
+
+  function handleImageFileChange(file: File | null) {
+    if (!file) {
+      onImageChange(null);
+      return;
+    }
+    if (!QUOTE_RESPONSE_IMAGE_TYPES.has(file.type)) return;
+    onImageChange(file);
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden border border-border bg-white shadow-none">
+        <div className="flex items-center justify-between border-b border-border px-4 py-3">
+          <h3 className="text-[13px] font-semibold text-foreground">견적답변 자동입력</h3>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={loading}
+            aria-label="닫기"
+            className="hub-btn-text px-2 text-muted-foreground disabled:opacity-50"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto p-4 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+          <section className="flex min-h-[360px] flex-col gap-3">
+            <div className="grid grid-cols-2 border border-border text-[12.5px]">
+              {(["text", "image"] as const).map((nextMode) => (
+                <button
+                  key={nextMode}
+                  type="button"
+                  onClick={() => onModeChange(nextMode)}
+                  disabled={loading}
+                  className={`px-3 py-2 font-medium disabled:opacity-50 ${
+                    mode === nextMode
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-white text-muted-foreground hover:bg-muted/30"
+                  }`}
+                >
+                  {nextMode === "text" ? "텍스트" : "이미지 캡처"}
+                </button>
+              ))}
+            </div>
+
+            {mode === "image" && (
+              <div
+                onDragEnter={(event) => {
+                  event.preventDefault();
+                  if (!loading) setIsImageDragActive(true);
+                }}
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  if (!loading) event.dataTransfer.dropEffect = "copy";
+                }}
+                onDragLeave={(event) => {
+                  event.preventDefault();
+                  if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+                  setIsImageDragActive(false);
+                }}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  setIsImageDragActive(false);
+                  if (loading) return;
+                  handleImageFileChange(event.dataTransfer.files.item(0));
+                }}
+                className={`grid gap-2 border border-dashed p-3 ${
+                  isImageDragActive
+                    ? "border-primary bg-primary/10"
+                    : "border-grid-border bg-muted/20"
+                }`}
+              >
+                <label htmlFor="quote-response-image" className="text-[12.5px] font-medium text-foreground">
+                  캡처 이미지
+                </label>
+                <input
+                  id="quote-response-image"
+                  type="file"
+                  accept={QUOTE_RESPONSE_IMAGE_ACCEPT}
+                  onChange={(event) => handleImageFileChange(event.currentTarget.files?.[0] ?? null)}
+                  disabled={loading}
+                  className="text-[12.5px] text-foreground file:mr-3 file:border file:border-border file:bg-white file:px-3 file:py-1.5 file:text-[12px] file:font-medium disabled:opacity-50"
+                />
+                <span className="text-[11.5px] leading-4 text-muted-foreground">
+                  파일을 이 영역으로 끌어오면 바로 첨부됩니다.
+                </span>
+                {image && (
+                  <span className="truncate text-[11.5px] text-muted-foreground">
+                    {image.name}
+                  </span>
+                )}
+              </div>
+            )}
+
+            <label htmlFor="quote-response-text" className="text-[12.5px] font-medium text-foreground">
+              {mode === "image" ? "OCR 인식 텍스트" : "견적답변 텍스트"}
+            </label>
+            <textarea
+              id="quote-response-text"
+              value={text}
+              onChange={(event) => onTextChange(event.target.value)}
+              placeholder="[식사]&#10;2일차 중식 현지식$10 / 석식 한식$10&#10;&#10;성인 25+아동 3 헤난 가든 인당 성인 $450 / 아동 $160"
+              className="min-h-[260px] flex-1 resize-none border border-input bg-white px-3 py-2 text-[12.5px] leading-5 text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+            />
+            {error && (
+              <p role="alert" className="text-[12.5px] text-destructive">
+                {error}
+              </p>
+            )}
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={mode === "image" ? onParseImage : onParse}
+                disabled={loading || (mode === "image" ? !image : !text.trim())}
+                className="hub-btn hub-btn-primary disabled:opacity-50"
+              >
+                {loading ? "분석 중..." : mode === "image" ? "OCR 후 미리보기" : "미리보기 생성"}
+              </button>
+            </div>
+          </section>
+
+          <section className="flex min-h-[360px] flex-col gap-3">
+            <div className="flex items-center justify-between gap-3">
+              <h4 className="text-[12.5px] font-semibold text-foreground">적용 미리보기</h4>
+              {preview && (
+                <span className="text-[11.5px] text-muted-foreground">
+                  신뢰도 {preview.diagnostics.confidence}
+                </span>
+              )}
+            </div>
+
+            {!preview ? (
+              <div className="flex min-h-[300px] items-center justify-center border border-dashed border-border bg-muted/20 text-[12.5px] text-muted-foreground">
+                견적답변을 분석하면 생성될 견적 행이 표시됩니다.
+              </div>
+            ) : (
+              <>
+                {displayWarnings.length > 0 && (
+                  <div className="border border-amber-200 bg-amber-50 px-3 py-2 text-[11.5px] leading-5 text-amber-800">
+                    {displayWarnings.map((warning) => (
+                      <p key={warning}>{warning}</p>
+                    ))}
+                  </div>
+                )}
+
+                {previewRates.some((rate) => displayRateCodes.has(rate.code as "KRW" | "USD" | "JPY")) && (
+                  <div className="grid gap-2 border border-grid-border bg-muted/20 p-3 sm:grid-cols-2">
+                    {previewRates
+                      .filter((rate) => displayRateCodes.has(rate.code as "KRW" | "USD" | "JPY"))
+                      .map((rate) => (
+                        <label key={rate.id} className="grid grid-cols-[auto_1fr_auto] items-center gap-2 text-[12.5px]">
+                          <span className="font-medium text-foreground">{rate.code}</span>
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            value={rate.rateToKrw > 0 ? formatIntegerInputValue(rate.rateToKrw) : ""}
+                            onChange={(event) => onRateChange(rate.id, readNonNegativeInput(event.currentTarget))}
+                            placeholder="환율"
+                            aria-label={`${rate.code} 환율`}
+                            className="hub-input text-right"
+                          />
+                          <span className="text-muted-foreground">원</span>
+                        </label>
+                      ))}
+                  </div>
+                )}
+
+                {displayItems.length > 0 && (
+                  <div className="grid gap-2 border border-grid-border bg-muted/20 p-3 sm:grid-cols-[1fr_auto]">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <label htmlFor="quote-response-bulk-quantity" className="text-[12.5px] font-medium text-foreground">
+                        전체 행 수량
+                      </label>
+                      <input
+                        id="quote-response-bulk-quantity"
+                        type="text"
+                        inputMode="numeric"
+                        value={bulkQuantityValue}
+                        onChange={(event) => onBulkQuantityChange(readNonNegativeInput(event.currentTarget))}
+                        placeholder="혼합"
+                        aria-label="전체 행 수량"
+                        className="hub-input w-24 text-right"
+                      />
+                    </div>
+                    <div className="flex items-center justify-end gap-2 text-[12.5px]">
+                      <span className="font-medium text-foreground">총합계</span>
+                      <span className="min-w-32 text-right font-semibold text-foreground">
+                        {hasPreviewMissingRate ? "환율 입력 후 계산" : `${previewTotal.toLocaleString()} 원`}
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                <div className="overflow-x-auto border border-grid-border">
+                  <table className="hub-grid">
+                    <thead>
+                      <tr className="border-b border-border text-muted-foreground">
+                        <th className="px-3 py-2 text-center font-medium">구분</th>
+                        <th className="px-3 py-2 text-center font-medium">날짜</th>
+                        <th className="px-3 py-2 text-center font-medium">내용</th>
+                        <th className="px-3 py-2 text-center font-medium">수량</th>
+                        <th className="px-3 py-2 text-center font-medium">단가</th>
+                        <th className="px-3 py-2 text-center font-medium">합계</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {displayItems.map((item) => {
+                        const rate = getExchangeRateForItem(previewRates, item);
+                        const needsRate = rate.id !== DEFAULT_EXCHANGE_RATE_ID && rate.rateToKrw <= 0;
+                        const subtotal = needsRate ? 0 : calculateItemSubtotalKrw(item, previewRates);
+                        return (
+                          <tr key={item.id} className="border-b border-border last:border-0">
+                            <td className="whitespace-nowrap px-3 py-2 text-center text-[12px]">
+                              {CATEGORY_LABELS[item.category]}
+                            </td>
+                            <td className="whitespace-nowrap px-3 py-2 text-center text-[12px]">
+                              {item.date || "-"}
+                            </td>
+                            <td className="min-w-56 whitespace-pre-wrap px-3 py-2 text-[12px] leading-5">
+                              {item.description}
+                            </td>
+                            <td className="px-3 py-2 text-right text-[12px]">
+                              {item.quantity.toLocaleString()}
+                            </td>
+                            <td className="whitespace-nowrap px-3 py-2 text-right text-[12px]">
+                              {rate.code} {item.unitPrice.toLocaleString()}
+                            </td>
+                            <td className="whitespace-nowrap px-3 py-2 text-right text-[12px]">
+                              {needsRate ? "환율 필요" : `${subtotal.toLocaleString()} 원`}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+          </section>
+        </div>
+
+        <div className="flex items-center justify-end gap-2 border-t border-border px-4 py-3">
+          <button type="button" onClick={onClose} disabled={loading} className="hub-btn hub-btn-custom disabled:opacity-50">
+            취소
+          </button>
+          <button
+            type="button"
+            onClick={onApply}
+            disabled={!preview || !canApply || loading}
+            className="hub-btn hub-btn-primary disabled:opacity-50"
+          >
+            현재 견적서에 적용
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

@@ -449,6 +449,18 @@ async function extractRawText(formData: FormData): Promise<{ rawText: string; ti
   return { rawText, title: title ?? fileTitle, isTextInput: false };
 }
 
+const HEADER_POLLUTION_RE =
+  /^(날짜|출발일|인원|호텔|차량|조건|포함|불포함|쇼핑|싱글차지|지상비|서커스|vip|팁현지)/iu;
+
+function isFastResultGarbage(itinerary: import("@/types").ItineraryData): boolean {
+  const firstDay = itinerary.days[0];
+  if (!firstDay || firstDay.items.length === 0) return true;
+  const pollutedCount = firstDay.items.filter((it) =>
+    HEADER_POLLUTION_RE.test(it.content),
+  ).length;
+  return pollutedCount / firstDay.items.length > 0.4;
+}
+
 function tryFastParse(rawText: string): ItineraryParseResult | null {
   try {
     const itinerary = parseItineraryText(rawText);
@@ -456,6 +468,7 @@ function tryFastParse(rawText: string): ItineraryParseResult | null {
       itinerary.days.length > 0 &&
       itinerary.days.some((d) => d.items.length > 0);
     if (!hasContent) return null;
+    if (isFastResultGarbage(itinerary)) return null;
     return {
       itinerary,
       diagnostics: { source: "fast-text", aiAttempted: false },

@@ -8,6 +8,7 @@
 - 하나투어 상품 URL 또는 상품코드 기반 일정 불러오기
 - `.xlsx`, `.pdf`, `.hwp`, `.hwpx`, `.docx`, 텍스트 일정 파싱
 - 일정표와 견적서 편집
+- 견적답변 텍스트 및 이미지 OCR 자동 가져오기
 - 일정표 Excel, 견적산출내역서 Excel 다운로드
 
 ## Quick Start
@@ -34,6 +35,8 @@ npm run dev
 | `OPENAI_MODEL` | AI 파싱 모델 |
 | `OPENAI_BASE_URL` | AI API base URL |
 | `OPENAI_PARSE_TIMEOUT_MS` | AI 파싱 timeout |
+| `QUOTE_RESPONSE_OCR_PYTHON_BIN` | 견적답변 이미지 OCR에 사용할 Python 실행 파일. 기본값 `python3` |
+| `QUOTE_RESPONSE_OCR_TIMEOUT_MS` | 견적답변 이미지 OCR timeout. 기본값 `60000` |
 
 ## Commands
 
@@ -56,6 +59,7 @@ npm run dev
 | `/api/mcp/products/:code` | GET | 상품코드 기반 일정 조회 |
 | `/api/hanatour/products/from-url` | POST | 하나투어 URL 기반 일정 조회 |
 | `/api/itinerary/parse` | POST | 파일/텍스트 일정 파싱 |
+| `/api/quote-response/parse` | POST | 견적답변 텍스트 또는 이미지 OCR 결과를 견적서 행으로 파싱 |
 | `/api/flights` | GET | 항공 mock 데이터 조회 |
 | `/api/export?type=itinerary\|cost` | POST | 현재 화면 상태로 Excel 생성 |
 
@@ -89,3 +93,4 @@ src/
 - 이 저장소는 DB를 사용하지 않습니다.
 - 원본 견적 문서 샘플(`.hwp`, `.doc`, `.docx`)은 민감정보 가능성이 있어 기본적으로 git ignore합니다.
 - 업무 날짜와 표시 날짜는 `src/lib/date/korea.ts` 기준으로 처리합니다.
+- 견적답변 이미지 OCR은 로컬 Python 환경의 PaddleOCR을 사용합니다. 텍스트 입력 파싱은 PaddleOCR 설치 없이 동작합니다.

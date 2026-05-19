@@ -41,6 +41,13 @@ function asDate(value: unknown): string {
     return `${looseFullDate[1].padStart(4, "0")}-${looseFullDate[2].padStart(2, "0")}-${looseFullDate[3].padStart(2, "0")}`;
   }
 
+  const shortKoreanDate = /(?:^|\b)(\d{2})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})일/u.exec(trimmed);
+  if (shortKoreanDate?.[1] && shortKoreanDate[2] && shortKoreanDate[3]) {
+    const yy = Number(shortKoreanDate[1]);
+    const year = yy >= 0 && yy <= 99 ? `20${String(yy).padStart(2, "0")}` : String(yy);
+    return `${year}-${shortKoreanDate[2].padStart(2, "0")}-${shortKoreanDate[3].padStart(2, "0")}`;
+  }
+
   const koreanDate = /(?:^|\b)(20\d{2})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})일/u.exec(trimmed);
   if (koreanDate?.[1] && koreanDate[2] && koreanDate[3]) {
     return `${koreanDate[1].padStart(4, "0")}-${koreanDate[2].padStart(2, "0")}-${koreanDate[3].padStart(2, "0")}`;
@@ -113,11 +120,13 @@ function normalizeSpreadsheetCell(value: unknown): string {
 }
 
 function normalizeItemType(content: string): ScheduleItemType {
-  const lower = content.toLowerCase();
-  if (/(숙박|호텔|리조트)/u.test(content)) return "ACCOMMODATION";
-  if (/(식사|조식|중식|석식|식권|다이닝)/u.test(content)) return "MEAL";
+  // 대괄호 안 식당명·식사 추천이 ACCOMMODATION 오분류를 유발하므로 제외
+  const forTypeCheck = content.replace(/\[[^\]]*\]/gu, "");
+  const lower = forTypeCheck.toLowerCase();
+  if (/(숙박|호텔|리조트)/u.test(forTypeCheck)) return "ACCOMMODATION";
+  if (/(식사|조식|중식|석식|식권|다이닝)/u.test(forTypeCheck)) return "MEAL";
   if (/(항공|이동|차량|버스|택시|공항|transfer|flight)/u.test(lower)) return "TRANSFER";
-  if (/(골프|관광|투어|체험|탐방|스파|쇼핑)/u.test(content)) return "SIGHTSEEING";
+  if (/(골프|관광|투어|체험|탐방|스파|쇼핑)/u.test(forTypeCheck)) return "SIGHTSEEING";
   return "OTHER";
 }
 
@@ -204,7 +213,149 @@ function parseDayLine(line: string): { dayNo: number; content: string } | null {
   if (!match) return null;
   const dayNo = Number(match[1]);
   if (!Number.isFinite(dayNo) || dayNo <= 0) return null;
-  return { dayNo, content: sanitizeText(match[2] ?? "").trim() };
+  const rawContent = sanitizeText(match[2] ?? "").trim();
+  // "(19) : 내용" 또는 "(19) - 내용" 형태 접두사 제거 (일차번호 중복 포함)
+  const content = rawContent.replace(/^\(\d{1,2}\)\s*[-:：]\s*/u, "");
+  return { dayNo, content };
+}
+
+interface HeaderMeta {
+  startDate: string;
+  endDate: string;
+  adult: number;
+  escort: number;
+  foc: number;
+  hotel: string;
+  localVehicle: string;
+  included: string;
+  excluded: string;
+  conditions: string;
+  shoppingCenters: number | undefined;
+  consumedIndices: Set<number>;
+}
+
+const HEADER_LINE_RE =
+  /^[-•]?\s*(날짜|출발일|일정|인원|호텔|차량|조건|포함사항?|불포함사항?|쇼핑)\s*[:：]\s*(.+)$/u;
+
+function extractHeaderMeta(source: string[]): HeaderMeta {
+  const meta: HeaderMeta = {
+    startDate: "",
+    endDate: "",
+    adult: 0,
+    escort: 0,
+    foc: 0,
+    hotel: "",
+    localVehicle: "",
+    included: "",
+    excluded: "",
+    conditions: "",
+    shoppingCenters: undefined,
+    consumedIndices: new Set(),
+  };
+
+  let i = 0;
+  while (i < source.length) {
+    // "N일차" 마커가 나오면 헤더 섹션 종료
+    if (/^(?:\(?\s*)?[0-9]{1,2}\s*일차/u.test(source[i] ?? "")) break;
+
+    const match = HEADER_LINE_RE.exec(source[i] ?? "");
+    if (!match) {
+      i++;
+      continue;
+    }
+
+    const key = match[1] ?? "";
+    const value = (match[2] ?? "").trim();
+    meta.consumedIndices.add(i);
+
+    if (key === "날짜" || key === "출발일") {
+      meta.startDate = asDate(value);
+      // "N박M일" 기간 추출
+      const nightDay = /(\d+)\s*박\s*(\d+)\s*일/u.exec(value);
+      if (nightDay?.[2] && meta.startDate) {
+        const totalDays = Number(nightDay[2]);
+        if (totalDays > 0) meta.endDate = addDays(meta.startDate, totalDays - 1);
+      }
+    } else if (key === "일정") {
+      // "3박5일" 단독 행
+      const nightDay = /(\d+)\s*박\s*(\d+)\s*일/u.exec(value);
+      if (nightDay?.[2] && meta.startDate) {
+        const totalDays = Number(nightDay[2]);
+        if (totalDays > 0) meta.endDate = addDays(meta.startDate, totalDays - 1);
+      }
+    } else if (key === "인원") {
+      // "14+0TC" 또는 "20+1foc" 또는 "성인 14 / TC 1" 형식 파싱
+      const adultMatch = /(\d+)\s*\+?\s*(?:성인)?/u.exec(value);
+      if (adultMatch?.[1]) meta.adult = Number(adultMatch[1]);
+      const tcMatch = /(\d+)\s*TC/iu.exec(value);
+      if (tcMatch?.[1]) meta.escort = Number(tcMatch[1]);
+      const focMatch = /(\d+)\s*foc/iu.exec(value);
+      if (focMatch?.[1]) meta.foc = Number(focMatch[1]);
+    } else if (key === "호텔") {
+      // 호텔 행: 다음 줄이 "도시 : 호텔명" 서브라인일 수 있음
+      const hotelLines: string[] = [value];
+      let j = i + 1;
+      while (j < source.length) {
+        const subLine = source[j] ?? "";
+        // "N일차" 나오거나 다른 키 패턴이면 중단
+        if (/^(?:\(?\s*)?[0-9]{1,2}\s*일차/u.test(subLine)) break;
+        if (HEADER_LINE_RE.test(subLine)) break;
+        if (subLine.length > 0) {
+          hotelLines.push(subLine);
+          meta.consumedIndices.add(j);
+        }
+        j++;
+        // 서브라인은 최대 5줄만 수집
+        if (j - i > 5) break;
+      }
+      meta.hotel = hotelLines.filter(Boolean).join(", ");
+    } else if (key === "차량") {
+      meta.localVehicle = value;
+    } else if (key === "조건") {
+      meta.conditions = value;
+      if (/노쇼핑/u.test(value)) meta.shoppingCenters = 0;
+    } else if (key === "포함" || key === "포함사항") {
+      meta.included = value;
+    } else if (key === "불포함" || key === "불포함사항") {
+      meta.excluded = value;
+    } else if (key === "쇼핑") {
+      const shopMatch = /(\d+)/u.exec(value);
+      if (shopMatch?.[1]) meta.shoppingCenters = Number(shopMatch[1]);
+    }
+
+    i++;
+  }
+
+  return meta;
+}
+
+function isSectionMarker(line: string): boolean {
+  const compact = line.replace(/\s/gu, "");
+  return /^[<\[*]{0,2}(간단일정|상세일정|일정표|상품정보|세부일정)[>\]*]{0,2}$/u.test(compact);
+}
+
+interface BracketMeal {
+  slot: MealSlot;
+  content: string;
+}
+
+function extractMealBracket(dayContent: string): { cleaned: string; meals: BracketMeal[] } {
+  const meals: BracketMeal[] = [];
+  const cleaned = dayContent
+    .replace(/\[([^\]]+)\]/gu, (_match, inner: string) => {
+      const parts = inner.split(/\//u);
+      for (const part of parts) {
+        const mealMatch = /^(조|중|석)\s*[:：]\s*(.+)$/u.exec(part.trim());
+        if (mealMatch?.[1] && mealMatch[2]) {
+          const slotMap: Record<string, MealSlot> = { 조: "breakfast", 중: "lunch", 석: "dinner" };
+          const slot = slotMap[mealMatch[1]] ?? "lunch";
+          meals.push({ slot, content: mealMatch[2].trim() });
+        }
+      }
+      return meals.length > 0 ? "" : `[${inner}]`;
+    })
+    .trim();
+  return { cleaned, meals };
 }
 
 function splitItemChunk(content: string): string[] {
@@ -221,22 +372,29 @@ function splitItemChunk(content: string): string[] {
 function parseNarrativeText(rawText: string, title?: string): ItineraryData {
   const source = rawText
     .replace(/\uFEFF/gu, "")
+    .replace(/\t+/gu, " ")
     .split(/\r?\n/gu)
     .map((line) => sanitizeText(line))
     .filter(Boolean);
 
+  if (source.length === 0) {
+    return buildBlankFallback(title);
+  }
+
+  const meta = extractHeaderMeta(source);
+
   const grouped: Record<number, string[]> = {};
   const dates: Record<number, string> = {};
-  let dayNo = 1;
+  const mealsByDay: Record<number, BracketMeal[]> = {};
+  let dayNo = 0;
   let groupName = title;
   let writtenAt = CURRENT_DATE;
 
-  if (source.length === 0) {
-    return buildBlankFallback(groupName);
-  }
+  for (let i = 0; i < source.length; i++) {
+    if (meta.consumedIndices.has(i)) continue;
 
-  const parsed: DaySchedule[] = [];
-  for (const line of source) {
+    const line = source[i] ?? "";
+
     if (/^(?:상품명|일정명|제목)[:：]/u.test(line)) {
       const next = line.split(/[:：]/).slice(1).join(":").trim();
       if (next.length > 0) groupName = next;
@@ -250,29 +408,43 @@ function parseNarrativeText(rawText: string, title?: string): ItineraryData {
       continue;
     }
 
+    if (isSectionMarker(line)) continue;
+
     const dayHeader = parseDayLine(line);
     if (dayHeader) {
       dayNo = dayHeader.dayNo;
-      grouped[dayNo] = grouped[dayNo] ?? [];
+      grouped[dayNo] ??= [];
       if (dayHeader.content.length > 0) {
-        grouped[dayNo].push(...splitItemChunk(dayHeader.content));
+        const { cleaned, meals } = extractMealBracket(dayHeader.content);
+        if (meals.length > 0) {
+          mealsByDay[dayNo] = [...(mealsByDay[dayNo] ?? []), ...meals];
+        }
+        if (cleaned) grouped[dayNo].push(...splitItemChunk(cleaned));
       }
       const parsedDate = asDate(line);
       if (parsedDate) dates[dayNo] = parsedDate;
       continue;
     }
 
+    if (dayNo === 0) continue;
+
+    const { cleaned, meals } = extractMealBracket(line);
+    if (meals.length > 0) {
+      mealsByDay[dayNo] = [...(mealsByDay[dayNo] ?? []), ...meals];
+    }
+
     const hasDayPrefix = /^(?:\d{1,2})\s*일차/u.test(line);
     if (/^[-•·*]/u.test(line) || hasDayPrefix) {
-      const value = line.replace(/^[-•·*]\s*/u, "");
-      grouped[dayNo] = grouped[dayNo] ?? [];
+      const value = (cleaned || line).replace(/^[-•·*]\s*/u, "");
+      grouped[dayNo] ??= [];
       grouped[dayNo].push(...splitItemChunk(value));
       continue;
     }
 
-    grouped[dayNo] = grouped[dayNo] ?? [];
-    if (line.length > 0) {
-      grouped[dayNo].push(line);
+    grouped[dayNo] ??= [];
+    const value = cleaned || line;
+    if (value.length > 0) {
+      grouped[dayNo].push(...splitItemChunk(value));
     }
   }
 
@@ -281,25 +453,31 @@ function parseNarrativeText(rawText: string, title?: string): ItineraryData {
     .filter((value) => Number.isFinite(value))
     .sort((a, b) => a - b);
 
-  const cursorBase = CURRENT_DATE;
-  let cursor = cursorBase;
+  const parsed: DaySchedule[] = [];
+  let cursor = CURRENT_DATE;
   for (const key of keys) {
     const dayItems = grouped[key] ?? [];
-    const items = dayItems.filter(Boolean).map((raw, idx) => {
+    const items: ScheduleItem[] = dayItems.filter(Boolean).map((raw, idx) => {
       const normalized = sanitizeText(raw);
       const item = buildLineItem(normalized, key, idx + 1);
-      return {
-        ...item,
-        region: item.region ?? "",
-      };
+      return { ...item, region: item.region ?? "" };
     });
+
+    const bracketMeals = mealsByDay[key] ?? [];
+    for (const bm of bracketMeals) {
+      items.push({
+        id: uuidv4(),
+        type: "MEAL",
+        content: bm.content,
+        mealSlot: bm.slot,
+        time: "",
+        region: "",
+      });
+    }
+
     if (items.length === 0) continue;
     const date = dates[key] || cursor;
-    parsed.push({
-      dayNo: key,
-      date,
-      items,
-    });
+    parsed.push({ dayNo: key, date, items });
     cursor = addDays(date, 1);
   }
 
@@ -307,29 +485,44 @@ function parseNarrativeText(rawText: string, title?: string): ItineraryData {
     const fallbackText = source.join(" ");
     const fallbackItems = splitItemChunk(fallbackText).map((entry, index) => buildLineItem(entry, 1, index + 1));
     if (fallbackItems.length > 0) {
-      parsed.push({
-        dayNo: 1,
-        date: CURRENT_DATE,
-        items: fallbackItems,
-      });
+      parsed.push({ dayNo: 1, date: CURRENT_DATE, items: fallbackItems });
     }
   }
 
   const normalized = ensureItineraryDateWindow(parsed);
+
   const city = parsed
-    .flatMap((item) => item.items.map((line) => line.content))
-    .filter(Boolean)
-    .join(" · ")
-    .slice(0, 120);
+    .flatMap((d) =>
+      d.items
+        .filter((it) => it.type === "SIGHTSEEING" || it.type === "TRANSFER")
+        .map((it) => it.content),
+    )
+    .filter((c) => c.length <= 20)
+    .slice(0, 8)
+    .join(" · ");
 
   const result = buildBlankFallback(groupName);
   result.header.writtenAt = writtenAt;
   result.overview.travelPeriod = normalized;
   result.overview.cities = city;
   result.days = parsed.sort((a, b) => a.dayNo - b.dayNo);
+
+  if (meta.localVehicle) result.basics.flight.localVehicle = meta.localVehicle;
+  if (meta.hotel) result.basics.accommodation.hotel = meta.hotel;
+  if (meta.included) result.basics.included = meta.included;
+  if (meta.excluded) result.basics.excluded = meta.excluded;
+  if (meta.conditions) result.basics.notes = meta.conditions;
+  if (meta.shoppingCenters !== undefined) result.basics.shoppingCenters = meta.shoppingCenters;
+  if (meta.adult > 0) result.overview.passengers.adult = meta.adult;
+  if (meta.escort > 0) result.overview.passengers.escort = meta.escort;
+  if (meta.foc > 0) result.overview.passengers.foc = meta.foc;
+  if (meta.startDate) {
+    result.overview.travelPeriod.start = meta.startDate;
+    result.overview.travelPeriod.end = meta.endDate || normalized.end;
+  }
+
   return enforceAccommodationPolicy(result);
 }
-
 function splitCsvLine(line: string): string[] {
   const result: string[] = [];
   let value = "";

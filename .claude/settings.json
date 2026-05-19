@@ -1,4 +1,7 @@
 {
+  "env": {
+    "CLAUDE_COMPACT_THRESHOLD": "0.75"
+  },
   "permissions": {
     "allow": [
       "Bash(npm run *)",
@@ -31,7 +34,9 @@
       "Write(package.json)",
       "Write(.env.example)",
       "Write(*.config.*)",
-      "Write(*.json)"
+      "Write(*.json)",
+      "Bash(rtk tsc *)",
+      "Bash(rtk find *)"
     ],
     "deny": [
       "Bash(git push origin main)",
@@ -84,8 +89,5 @@
         ]
       }
     ]
-  },
-  "env": {
-    "CLAUDE_COMPACT_THRESHOLD": "0.75"
   }
 }
