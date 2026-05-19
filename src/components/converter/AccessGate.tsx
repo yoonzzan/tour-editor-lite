@@ -71,7 +71,7 @@ export function AccessGate({ children }: Props) {
   if (isChecking) {
     return (
       <main className="hub-app flex min-h-screen items-center justify-center">
-        <p className="text-sm text-muted-foreground">확인 중...</p>
+        <p className="text-[12.5px] text-muted-foreground">확인 중...</p>
       </main>
     );
   }

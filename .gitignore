@@ -17,6 +17,7 @@ CLAUDE.local.md
 .venv-ocr/
 .paddlex/
 .bkit/runtime/
+.bkit/audit/
 .bkit/snapshots/
 .bkit/state/
 .playwright-mcp/

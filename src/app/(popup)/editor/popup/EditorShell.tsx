@@ -224,7 +224,7 @@ export function EditorShell({ role }: Props) {
             <ItineraryEditor />
           ) : (
             <div className="flex h-full flex-col items-center justify-center gap-3">
-              <p className="text-sm text-muted-foreground">
+              <p className="text-[12.5px] text-muted-foreground">
                 불러온 일정이 없습니다.
               </p>
               <button
