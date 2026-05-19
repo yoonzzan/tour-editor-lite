@@ -36,7 +36,11 @@ function formatFlightSegment(segment: FlightSegment): string {
 }
 
 export function EditorShell({ role }: Props) {
-  const { isDirty, itinerary, quote, setItinerary, setQuote } = useEditorStore();
+  const { isDirty, itinerary, quote, setItinerary, setQuote, initializeEmptyQuote } = useEditorStore();
+
+  useEffect(() => {
+    initializeEmptyQuote();
+  }, [initializeEmptyQuote]);
 
   const [showSearch, setShowSearch] = useState(false);
   const [activeTab, setActiveTab] = useState<EditorTab>("itinerary");
@@ -121,7 +125,6 @@ export function EditorShell({ role }: Props) {
     }
   }
 
-  const isNewQuote = true;
   const hasItinerary = !!itinerary;
 
   // ── 본문 ─────────────────────────────────────────────
@@ -198,57 +201,46 @@ export function EditorShell({ role }: Props) {
       </header>
 
       {/* 탭 바 */}
-      {hasItinerary && (
-        <div className="hub-tabs flex w-full shrink-0 px-2">
-          <div className="flex">
-            <TabButton
-              active={activeTab === "itinerary"}
-              onClick={() => setActiveTab("itinerary")}
-              label="일정표"
-            />
-            <TabButton
-              active={activeTab === "quote"}
-              onClick={() => setActiveTab("quote")}
-              label="견적서"
-            />
-          </div>
+      <div className="hub-tabs flex w-full shrink-0 px-2">
+        <div className="flex">
+          <TabButton
+            active={activeTab === "itinerary"}
+            onClick={() => setActiveTab("itinerary")}
+            label="일정표"
+          />
+          <TabButton
+            active={activeTab === "quote"}
+            onClick={() => setActiveTab("quote")}
+            label="견적서"
+          />
         </div>
-      )}
+      </div>
 
       {/* 본문 — 탭별 CSS hidden으로 마운트 유지 */}
       <main className="hub-workspace flex-1 overflow-auto">
-        {hasItinerary ? (
-          <>
-            <div
-              className={`h-full p-3 ${activeTab === "itinerary" ? "" : "hidden"}`}
-            >
-              <ItineraryEditor />
+        {/* 일정표 패널 */}
+        <div className={`h-full p-3 ${activeTab === "itinerary" ? "" : "hidden"}`}>
+          {hasItinerary ? (
+            <ItineraryEditor />
+          ) : (
+            <div className="flex h-full flex-col items-center justify-center gap-3">
+              <p className="text-sm text-muted-foreground">
+                불러온 일정이 없습니다.
+              </p>
+              <button
+                className="hub-btn hub-btn-primary"
+                onClick={() => setShowSearch(true)}
+              >
+                일정 불러오기
+              </button>
             </div>
-            <div
-              className={`h-full p-3 ${activeTab === "quote" ? "" : "hidden"}`}
-            >
-              <QuoteEditor role={role} />
-            </div>
-          </>
-        ) : isNewQuote ? (
-          <div className="flex h-full flex-col items-center justify-center gap-3">
-            <p className="text-sm text-muted-foreground">
-              연결된 견적이 없습니다.
-            </p>
-            <button
-              className="hub-btn hub-btn-primary"
-              onClick={() => setShowSearch(true)}
-            >
-              일정 불러오기
-            </button>
-          </div>
-        ) : (
-          <div className="flex h-full items-center justify-center">
-            <p className="text-sm text-muted-foreground">
-              일정 데이터를 초기화하는 중...
-            </p>
-          </div>
-        )}
+          )}
+        </div>
+
+        {/* 견적서 패널 */}
+        <div className={`h-full p-3 ${activeTab === "quote" ? "" : "hidden"}`}>
+          <QuoteEditor role={role} />
+        </div>
       </main>
 
       {/* SearchPopup 모달 */}
