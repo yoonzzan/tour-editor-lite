@@ -55,9 +55,9 @@ function normalizeAiItemType(value: unknown): string | undefined {
 function normalizeAiMealSlot(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const normalized = value.trim().toLowerCase();
-  if (normalized === "breakfast" || normalized === "b" || normalized === "조" || normalized === "조식") return "breakfast";
-  if (normalized === "lunch" || normalized === "l" || normalized === "중" || normalized === "중식") return "lunch";
-  if (normalized === "dinner" || normalized === "d" || normalized === "석" || normalized === "석식") return "dinner";
+  if (normalized === "breakfast" || normalized === "b" || normalized === "조" || normalized === "조식" || normalized === "아침") return "breakfast";
+  if (normalized === "lunch" || normalized === "l" || normalized === "중" || normalized === "중식" || normalized === "점심") return "lunch";
+  if (normalized === "dinner" || normalized === "d" || normalized === "석" || normalized === "석식" || normalized === "저녁") return "dinner";
   return undefined;
 }
 
@@ -304,7 +304,7 @@ function scoreAiEvidenceLine(line: string): number {
   if (extractDayNoFromScheduleLine(text) !== undefined) score += 80;
   if (/(?:제\s*)?\d{1,2}\s*일차?|DAY\s*\d{1,2}/iu.test(text)) score += 55;
   if (/(?:일자|날짜|지역|교통편|시간|세부\s*일정|ITINERARY|MEALS?)/iu.test(text)) score += 35;
-  if (/(?:조식|중식|석식|조[:：]|중[:：]|석[:：]|\b[BLD]\s*[:：]|breakfast|lunch|dinner)/iu.test(text)) score += 35;
+  if (/(?:조식|중식|석식|아침|점심|저녁|조[:：]|중[:：]|석[:：]|\b[BLD]\s*[:：]|breakfast|lunch|dinner)/iu.test(text)) score += 35;
   if (/(?:HOTEL|호텔|숙소|숙박|리조트|check[-\s]?in|체크[-\s]?인)/iu.test(text)) score += 30;
   if (/(?:항공|출발|도착|공항|전용버스|차량|가이드|포함|불포함|선택관광|쇼핑|요금|인원)/u.test(text)) score += 20;
   if (isNoiseLine(text) || isScheduleChromeToken(text)) score -= 40;
@@ -436,7 +436,7 @@ function collectItineraryEvidence(rawText: string): ItineraryEvidenceSummary {
       });
     }
 
-    const rawMealMatches = Array.from(text.matchAll(/(?:^|[\s|])([조중석bld]|조식|중식|석식|breakfast|lunch|dinner)\s*[:：]\s*([^|\n]+)/giu));
+    const rawMealMatches = Array.from(text.matchAll(/(?:^|[\s|])([조중석bld]|조식|중식|석식|아침|점심|저녁|breakfast|lunch|dinner)\s*[:：]\s*([^|\n]+)/giu));
     for (const match of rawMealMatches) {
       const slot = toMealSlotByToken(match[1] ?? "");
       if (!slot) continue;
@@ -454,7 +454,7 @@ function collectItineraryEvidence(rawText: string): ItineraryEvidenceSummary {
 
     const columns = splitScheduleColumnsWithTabs(text);
     for (const [index, column] of columns.entries()) {
-      const markerMatch = /^([조중석bld]|조식|중식|석식|breakfast|lunch|dinner)\s*([:：])?\s*$/iu.exec(column);
+      const markerMatch = /^([조중석bld]|조식|중식|석식|아침|점심|저녁|breakfast|lunch|dinner)\s*([:：])?\s*$/iu.exec(column);
       const slot = toMealSlotByToken(markerMatch?.[1] ?? "");
       if (!slot) continue;
       const nextValue = columns
@@ -639,13 +639,13 @@ function fallbackType(content: string): ScheduleItemType {
   ) {
     return "ACCOMMODATION";
   }
-  const hasMeal = /(?:조식|중식|석식|조[:：]|중[:：]|석[:：]|\b[BLD]\s*[:：]|meal|breakfast|lunch|dinner)/iu.test(content);
+  const hasMeal = /(?:조식|중식|석식|아침|점심|저녁|조[:：]|중[:：]|석[:：]|\b[BLD]\s*[:：]|meal|breakfast|lunch|dinner)/iu.test(content);
   const hasMovement = /(이동|항공|차량|버스|공항|flight|transfer|출발|도착|탑승|출국|출국수속|입국|입국수속|미팅|송영)/u.test(text);
   const hasActivity = /(관광|투어|체험|쇼핑|골프|관람|견학|캠퍼스|박물관|식물원|차이나타운|머라이언|유니버셜|가든스|리버원더스|야경쇼)/u.test(content);
   const mealContext = /(호텔|숙박|체크인|체크아웃|휴식|투숙)/u.test(content);
   const nonMealText = cleanText(
     content
-      .replace(/(?:조식|중식|석식|조[:：]|중[:：]|석[:：]|\b[BLD]\s*[:：]|meal|breakfast|lunch|dinner)/giu, "")
+      .replace(/(?:조식|중식|석식|아침|점심|저녁|조[:：]|중[:：]|석[:：]|\b[BLD]\s*[:：]|meal|breakfast|lunch|dinner)/giu, "")
       .replace(/[|,/()[\]·•\-\s]+/gu, " ")
   );
   if (mealContext && hasMeal && !hasMovement && !hasActivity) return "OTHER";
@@ -657,9 +657,9 @@ function fallbackType(content: string): ScheduleItemType {
 }
 
 function inferMealSlot(content: string): MealSlot | undefined {
-  if (/조식/u.test(content)) return "breakfast";
-  if (/중식/u.test(content)) return "lunch";
-  if (/석식/u.test(content)) return "dinner";
+  if (/(조식|아침)/u.test(content)) return "breakfast";
+  if (/(중식|점심)/u.test(content)) return "lunch";
+  if (/(석식|저녁)/u.test(content)) return "dinner";
   return undefined;
 }
 
@@ -671,9 +671,9 @@ function mealSlotLabel(slot: MealSlot): string {
 
 function toMealSlotByToken(token: string): MealSlot | undefined {
   const normalized = cleanText(token).toLowerCase();
-  if (normalized === "조" || normalized === "조식" || normalized === "b" || normalized === "breakfast") return "breakfast";
-  if (normalized === "중" || normalized === "중식" || normalized === "l" || normalized === "lunch") return "lunch";
-  if (normalized === "석" || normalized === "석식" || normalized === "d" || normalized === "dinner") return "dinner";
+  if (normalized === "조" || normalized === "조식" || normalized === "아침" || normalized === "b" || normalized === "breakfast") return "breakfast";
+  if (normalized === "중" || normalized === "중식" || normalized === "점심" || normalized === "l" || normalized === "lunch") return "lunch";
+  if (normalized === "석" || normalized === "석식" || normalized === "저녁" || normalized === "d" || normalized === "dinner") return "dinner";
   return undefined;
 }
 
@@ -700,19 +700,19 @@ function parseMealFromToken(
     .replace(/^[·•\-\s|]+/u, "")
     .replace(/^\(\s*(\S+)\s*\)\s*/u, "$1 ");
 
-  const colonMatch = /^([조중석bld]|breakfast|lunch|dinner)\s*[:：]\s*([^|]+)$/iu.exec(cleaned);
+  const colonMatch = /^([조중석bld]|아침|점심|저녁|breakfast|lunch|dinner)\s*[:：]\s*([^|]+)$/iu.exec(cleaned);
   if (colonMatch) {
     const slot = toMealSlotByToken(colonMatch[1] ?? "");
     if (slot) return { slot, text: sanitizeMealText(colonMatch[2] ?? "", slot) };
   }
 
-  const hyphenMatch = /^([조중석]|조식|중식|석식|breakfast|lunch|dinner)\s*[-–—]\s*([^|]+)$/iu.exec(cleaned);
+  const hyphenMatch = /^([조중석]|조식|중식|석식|아침|점심|저녁|breakfast|lunch|dinner)\s*[-–—]\s*([^|]+)$/iu.exec(cleaned);
   if (hyphenMatch) {
     const slot = toMealSlotByToken(hyphenMatch[1] ?? "");
     if (slot) return { slot, text: sanitizeMealText(hyphenMatch[2] ?? "", slot) };
   }
 
-  const directMatch = /^(조식|중식|석식|breakfast|lunch|dinner)(?:\s*[:：]?\s*)?(.*)$/iu.exec(cleaned);
+  const directMatch = /^(조식|중식|석식|아침|점심|저녁|breakfast|lunch|dinner)(?:\s*[:：]?\s*)?(.*)$/iu.exec(cleaned);
   if (directMatch) {
     const slot = toMealSlotByToken(directMatch[1] ?? "");
     if (!slot) return undefined;
@@ -757,7 +757,7 @@ function extractMealsFromContent(content: string): {
       standaloneParsed.text === mealSlotLabel(standaloneParsed.slot)
     ) {
       const segmentRemainder = stripPostMealConnector(
-        cleanText(segment.replace(/^(조식|중식|석식|breakfast|lunch|dinner)\s*/iu, ""))
+        cleanText(segment.replace(/^(조식|중식|석식|아침|점심|저녁|breakfast|lunch|dinner)\s*/iu, ""))
       );
       if (segmentRemainder && segmentRemainder !== segment) {
         meals.push(standaloneParsed);
@@ -792,7 +792,7 @@ function extractMealsFromContent(content: string): {
       }
       removeSegment(index);
       if (parsed.text === mealSlotLabel(parsed.slot) && next) {
-        const nextIsMeal = /^(조식|중식|석식)\b/u.test(next);
+        const nextIsMeal = /^(조식|중식|석식|아침|점심|저녁)\b/u.test(next);
         const nextRemainder = stripPostMealConnector(next);
         if (next !== nextRemainder) {
           meals.push(parsed);
@@ -852,7 +852,7 @@ function extractMealsFromContent(content: string): {
   const cleanedSegments = segments.filter((_, idx) => keepSegment[idx]);
   working = cleanedSegments.join(" | ");
 
-  const explicitMealPattern = /(^|[\s|])([조중석bld]|breakfast|lunch|dinner)\s*[:：]\s*([^|\n]+)/giu;
+  const explicitMealPattern = /(^|[\s|])([조중석bld]|조식|중식|석식|아침|점심|저녁|breakfast|lunch|dinner)\s*[:：]\s*([^|\n]+)/giu;
   for (const match of working.matchAll(explicitMealPattern)) {
     const slot = toMealSlotByToken(match[2] ?? "");
     if (!slot) continue;
@@ -861,7 +861,7 @@ function extractMealsFromContent(content: string): {
   }
   working = working.replace(explicitMealPattern, (_raw: string, prefix: string) => prefix);
 
-  const parenthesizedAfterMealPattern = /(조식|중식|석식)\s*\(\s*([^)]+)\s*\)\s*후/gu;
+  const parenthesizedAfterMealPattern = /(조식|중식|석식|아침|점심|저녁)\s*\(\s*([^)]+)\s*\)\s*후/gu;
   working = working.replace(parenthesizedAfterMealPattern, (_raw: string, token: string, detail: string) => {
     const slot = toMealSlotByToken(token);
     if (slot) {
@@ -870,14 +870,14 @@ function extractMealsFromContent(content: string): {
     return "";
   });
 
-  const afterMealPattern = /(조식|중식|석식)\s*후/gu;
+  const afterMealPattern = /(조식|중식|석식|아침|점심|저녁)\s*후/gu;
   working = working.replace(afterMealPattern, (_raw: string, token: string) => {
     const slot = toMealSlotByToken(token);
     if (slot) meals.push({ slot, text: mealSlotLabel(slot) });
     return "";
   });
 
-  const standaloneMealPrefixPattern = /(?:^|\|)\s*(조식|중식|석식)\s+([^|]+?)(?=\s*(?:\||$))/gu;
+  const standaloneMealPrefixPattern = /(?:^|\|)\s*(조식|중식|석식|아침|점심|저녁)\s+([^|]+?)(?=\s*(?:\||$))/gu;
   working = working.replace(standaloneMealPrefixPattern, (_raw: string, token: string, detail: string) => {
     const slot = toMealSlotByToken(token);
     if (!slot) return "";
@@ -886,7 +886,7 @@ function extractMealsFromContent(content: string): {
     return "";
   });
 
-  const standaloneMealPattern = /^[•·\s-]*(조식|중식|석식)\s*$/u;
+  const standaloneMealPattern = /^[•·\s-]*(조식|중식|석식|아침|점심|저녁)\s*$/u;
   if (standaloneMealPattern.test(cleanText(working))) {
     const slot = toMealSlotByToken(cleanText(working).replace(/[•·\s-]/gu, ""));
     if (slot) meals.push({ slot, text: mealSlotLabel(slot) });
@@ -1134,12 +1134,12 @@ function isScheduleChromeToken(text: string): boolean {
 function isLikelyMealText(value: string): boolean {
   const compact = cleanText(value).replace(/\s+/gu, "");
   if (!compact) return false;
-  return /(?:식사\s*구분|[조중석]식|[조중석][:：]|조식|중식|석식|\b[BLD]\s*[:：])/iu.test(compact);
+  return /(?:식사\s*구분|[조중석]식|[조중석][:：]|조식|중식|석식|아침|점심|저녁|\b[BLD]\s*[:：])/iu.test(compact);
 }
 
 function isEmptyMealLabel(value: string): boolean {
   const normalized = cleanText(value).replace(/[\s•·\-]+/gu, "");
-  return normalized === "조식" || normalized === "중식" || normalized === "석식" || normalized === "조" || normalized === "중" || normalized === "석";
+  return normalized === "조식" || normalized === "중식" || normalized === "석식" || normalized === "아침" || normalized === "점심" || normalized === "저녁" || normalized === "조" || normalized === "중" || normalized === "석";
 }
 
 function mealTextScore(value: string): number {
@@ -1147,7 +1147,7 @@ function mealTextScore(value: string): number {
   if (!normalized) return 0;
   if (isEmptyMealLabel(normalized)) return 0;
   let score = normalized.length;
-  if (/(?:식사\s*구분|[조중석]\s*[:：]|조식|중식|석식|\b[BLD]\s*[:：])/iu.test(normalized)) {
+  if (/(?:식사\s*구분|[조중석]\s*[:：]|조식|중식|석식|아침|점심|저녁|\b[BLD]\s*[:：])/iu.test(normalized)) {
     score -= 2;
   }
   if (/^(?:후)(?:\s|$)/u.test(normalized) || /\s후\s/u.test(normalized)) score -= 40;
@@ -1250,7 +1250,7 @@ function isLikelyTransport(text: string): boolean {
   const value = cleanText(text);
   if (!value) return false;
   if (isPlaceholderCell(value)) return false;
-  if (/(조식|중식|석식|조[:：]|중[:：]|석[:：]|\b[BLD]\s*[:：]|meal|breakfast|lunch|dinner)/iu.test(value)) return false;
+  if (/(조식|중식|석식|아침|점심|저녁|조[:：]|중[:：]|석[:：]|\b[BLD]\s*[:：]|meal|breakfast|lunch|dinner)/iu.test(value)) return false;
   if (/\b(?:OZ|KE|LJ|BX|TW|ZE|RS|7C)\d{2,4}\b/u.test(value)) return true;
   if (value.length > 20) return false;
   return /^(?:전용버스|버스|항공|항공편|차량|택시|지하철|열차|페리|도보|기내)$/u.test(value)
@@ -1268,7 +1268,7 @@ function isLikelyRegion(text: string): boolean {
   if (isLikelyTransport(value)) return false;
   if (extractTimeToken(value)) return false;
   if (/^\d+$/u.test(compact)) return false;
-  if (/^(?:학교|싱가포르본진일정표|일정표|교통편|예상|항공|버스|차량|차로|공항|입국|출국|입국수속|출국수속|미팅|체크인|기내식|피켓명|이동|숙박|호텔|항목구분|지역|시간|내용|식사|조식|중식|석식|체크아웃|버스티켓|전용버스)$/u.test(
+  if (/^(?:학교|싱가포르본진일정표|일정표|교통편|예상|항공|버스|차량|차로|공항|입국|출국|입국수속|출국수속|미팅|체크인|기내식|피켓명|이동|숙박|호텔|항목구분|지역|시간|내용|식사|조식|중식|석식|아침|점심|저녁|체크아웃|버스티켓|전용버스)$/u.test(
     compact
   )) {
     return false;
@@ -1281,7 +1281,7 @@ function isLikelyRegion(text: string): boolean {
     return false;
   }
   if (
-    /(예정|확인|출발|도착|탑승|이동|견학|미팅|해산|인원|가이드|조식|중식|석식|기내식|호텔로이동|체크인)/u.test(
+    /(예정|확인|출발|도착|탑승|이동|견학|미팅|해산|인원|가이드|조식|중식|석식|아침|점심|저녁|기내식|호텔로이동|체크인)/u.test(
       compact
     )
   ) {
@@ -1373,9 +1373,9 @@ function parsePipeColumns(text: string): {
     .filter((value, index, source) => {
       if (!value || isPlaceholderCell(value)) return false;
       if (isDayLabelToken(value)) return false;
-      if (/^(?:[조중석bld]|breakfast|lunch|dinner)\s*[:：]?$/iu.test(value)) return false;
+      if (/^(?:[조중석bld]|조식|중식|석식|아침|점심|저녁|breakfast|lunch|dinner)\s*[:：]?$/iu.test(value)) return false;
       const previous = source[index - 1] ? cleanText(source[index - 1]) : "";
-      if (/^(?:[조중석bld]|breakfast|lunch|dinner)\s*[:：]?$/iu.test(previous)) return false;
+      if (/^(?:[조중석bld]|조식|중식|석식|아침|점심|저녁|breakfast|lunch|dinner)\s*[:：]?$/iu.test(previous)) return false;
       return true;
     });
 
@@ -1541,7 +1541,7 @@ function normalizeKey(text: string): string {
     .toLowerCase()
     .replace(/\b(?:oz|ke|lj|bx|tw|ze|rs|7c)\d{2,4}\b/gu, "")
     .replace(/\b([01]?\d|2[0-3]):([0-5]\d)\b/gu, "")
-    .replace(/(?:조식|중식|석식|[조중석]\s*[:：]|\b[BLD]\s*[:：]|meal|breakfast|lunch|dinner)/giu, "")
+    .replace(/(?:조식|중식|석식|아침|점심|저녁|[조중석]\s*[:：]|\b[BLD]\s*[:：]|meal|breakfast|lunch|dinner)/giu, "")
     .replace(/[^\p{L}\p{N}]+/gu, "");
 }
 
@@ -1745,7 +1745,7 @@ function countLikelyNoiseLines(rawText: string): number {
 }
 
 function rawTextHasMeal(rawText: string): boolean {
-  return /(?:조식|중식|석식|조[:：]|중[:：]|석[:：]|\b[BLD]\s*[:：]|MEALS?)/iu.test(rawText);
+  return /(?:조식|중식|석식|아침|점심|저녁|조[:：]|중[:：]|석[:：]|\b[BLD]\s*[:：]|MEALS?)/iu.test(rawText);
 }
 
 function rawTextHasAccommodation(rawText: string): boolean {
@@ -2566,22 +2566,22 @@ function extractRawMealOverrides(rawText: string): Array<{ dayNo: number; meals:
     const parsedDayNo = extractDayNoFromScheduleLine(line);
     if (parsedDayNo !== undefined) currentDayNo = parsedDayNo;
 
-    const matches = Array.from(line.matchAll(/(?:^|[\s|])([조중석bld]|조식|중식|석식|breakfast|lunch|dinner)\s*[:：]\s*([^|\n]+)/giu));
+    const matches = Array.from(line.matchAll(/(?:^|[\s|])([조중석bld]|조식|중식|석식|아침|점심|저녁|breakfast|lunch|dinner)\s*[:：]\s*([^|\n]+)/giu));
     const columnMeals: Array<{ slot: MealSlot; value: string }> = [];
     const columns = splitScheduleColumnsWithTabs(line);
     for (const [index, column] of columns.entries()) {
-      const markerMatch = /^([조중석bld]|조식|중식|석식|breakfast|lunch|dinner)\s*([:：])?\s*$/iu.exec(column);
-      const inlineMatch = /^([조중석bld]|조식|중식|석식|breakfast|lunch|dinner)\s*[:：]\s*(.+)$/iu.exec(column);
+      const markerMatch = /^([조중석bld]|조식|중식|석식|아침|점심|저녁|breakfast|lunch|dinner)\s*([:：])?\s*$/iu.exec(column);
+      const inlineMatch = /^([조중석bld]|조식|중식|석식|아침|점심|저녁|breakfast|lunch|dinner)\s*[:：]\s*(.+)$/iu.exec(column);
       const slot = toMealSlotByToken(markerMatch?.[1] ?? inlineMatch?.[1] ?? "");
       if (!slot) continue;
 
       const inlineValue = cleanText(inlineMatch?.[2] ?? "");
-      const canUseNextValue = Boolean(markerMatch?.[2]) || /^[조중석bld]$/iu.test(cleanText(markerMatch?.[1] ?? ""));
+      const canUseNextValue = Boolean(markerMatch?.[2]) || /^(?:[조중석bld]|아침|점심|저녁)$/iu.test(cleanText(markerMatch?.[1] ?? ""));
       const nextValue = canUseNextValue
         ? columns
             .slice(index + 1)
             .map((value) => cleanText(value))
-            .find((value) => value && !isPlaceholderCell(value) && parseDayNoToken(value) === undefined)
+            .find((value) => value && !/^후(?:\s|$)/u.test(value) && !isPlaceholderCell(value) && parseDayNoToken(value) === undefined)
         : "";
       const value = sanitizeMealText(inlineValue || nextValue || "", slot);
       if (value && value !== mealSlotLabel(slot)) {
@@ -3121,7 +3121,7 @@ function parseFallbackFromRaw(rawText: string, title?: string): ItineraryData {
       const split = splitDirectScheduleContent(finalContent);
       const type = isHotelLabelContent ? "ACCOMMODATION" : fallbackType(split.content);
       const mealText = type === "MEAL"
-        ? cleanText(finalContent.replace(/(?:^|\s)(?:조식|중식|석식|조[:：]|중[:：]|석[:：]|\b[BLD]\s*[:：])\s*/iu, ""))
+        ? cleanText(finalContent.replace(/(?:^|\s)(?:조식|중식|석식|아침|점심|저녁|조[:：]|중[:：]|석[:：]|\b[BLD]\s*[:：])\s*/iu, ""))
         : "";
 
       const item: ScheduleItem = {
@@ -3332,7 +3332,7 @@ function parseFallbackFromRaw(rawText: string, title?: string): ItineraryData {
         const type = isHotelLabelLine ? "ACCOMMODATION" : fallbackType(split.content);
         const mealSlot = type === "MEAL" ? inferMealSlot(content) : undefined;
         const mealText = type === "MEAL"
-          ? cleanText(content.replace(/(?:^|\s)(?:조식|중식|석식|조[:：]|중[:：]|석[:：]|\b[BLD]\s*[:：])\s*/iu, ""))
+          ? cleanText(content.replace(/(?:^|\s)(?:조식|중식|석식|아침|점심|저녁|조[:：]|중[:：]|석[:：]|\b[BLD]\s*[:：])\s*/iu, ""))
           : "";
 
       const item: ScheduleItem = {

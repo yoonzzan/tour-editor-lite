@@ -55,4 +55,18 @@ describe("generateQuoteItems", () => {
     expect(items.length).toBeGreaterThan(0);
     expect(items.every((item) => item.quantity === 4)).toBe(true);
   });
+
+  it("uses only schedule content for generated quote descriptions", () => {
+    const itinerary = buildItinerary({ adult: 2, child: 0, infant: 0, escort: 0, foc: 0 });
+    itinerary.days[0]!.items[0] = {
+      id: "item-1",
+      type: "SIGHTSEEING",
+      content: "사파리 파크",
+      detail: "입장권 포함",
+    };
+
+    const items = generateQuoteItems(itinerary);
+
+    expect(items.find((item) => item.category === "SIGHTSEEING")?.description).toBe("사파리 파크");
+  });
 });

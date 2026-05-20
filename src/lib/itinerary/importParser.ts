@@ -124,27 +124,39 @@ function normalizeItemType(content: string): ScheduleItemType {
   const forTypeCheck = content.replace(/\[[^\]]*\]/gu, "");
   const lower = forTypeCheck.toLowerCase();
   if (/(숙박|호텔|리조트)/u.test(forTypeCheck)) return "ACCOMMODATION";
-  if (/(식사|조식|중식|석식|식권|다이닝)/u.test(forTypeCheck)) return "MEAL";
+  if (/(식사|조식|중식|석식|아침|점심|저녁|식권|다이닝)/u.test(forTypeCheck)) return "MEAL";
   if (/(항공|이동|차량|버스|택시|공항|transfer|flight)/u.test(lower)) return "TRANSFER";
   if (/(골프|관광|투어|체험|탐방|스파|쇼핑)/u.test(forTypeCheck)) return "SIGHTSEEING";
   return "OTHER";
 }
 
 function inferMealSlot(content: string): MealSlot {
-  if (/(중식|런치|lunch)/iu.test(content)) return "lunch";
+  if (/(중식|점심|런치|lunch)/iu.test(content)) return "lunch";
   if (/(석식|저녁|디너|dinner)/iu.test(content)) return "dinner";
   return "breakfast";
+}
+
+function normalizeMealContent(content: string, detail: string | undefined, slot: MealSlot): string {
+  const source = sanitizeText([content, detail].filter(Boolean).join(": "));
+  const labelPattern = /^(?:식사\s*\|\s*)?(?:조식|중식|석식|아침|점심|저녁|조|중|석|b|l|d|breakfast|lunch|dinner)\s*(?:[:：]|\|)?\s*/iu;
+  const cleaned = sanitizeText(source.replace(labelPattern, ""));
+  if (cleaned) return cleaned;
+  if (slot === "breakfast") return "조식";
+  if (slot === "lunch") return "중식";
+  return "석식";
 }
 
 function buildLineItem(content: string, _dayNo: number, _seq: number, detail?: string): ScheduleItem {
   const split = detail ? { content, detail } : splitStructuredScheduleContent(content);
   const itemType = normalizeItemType(split.content);
+  const mealSlot = itemType === "MEAL" ? inferMealSlot([split.content, split.detail].filter(Boolean).join(" ")) : undefined;
+  const mealContent = mealSlot ? normalizeMealContent(split.content, split.detail, mealSlot) : "";
   return {
     id: uuidv4(),
     type: itemType,
-    content: split.content,
-    ...(split.detail ? { detail: split.detail } : {}),
-    ...(itemType === "MEAL" ? { mealSlot: inferMealSlot(split.content) } : {}),
+    content: mealSlot ? mealContent : split.content,
+    ...(!mealSlot && split.detail ? { detail: split.detail } : {}),
+    ...(mealSlot ? { mealSlot, meal: { [mealSlot]: mealContent } } : {}),
     time: "",
     region: "",
   };
@@ -345,9 +357,16 @@ function extractMealBracket(dayContent: string): { cleaned: string; meals: Brack
     .replace(/\[([^\]]+)\]/gu, (_match, inner: string) => {
       const parts = inner.split(/\//u);
       for (const part of parts) {
-        const mealMatch = /^(조|중|석)\s*[:：]\s*(.+)$/u.exec(part.trim());
+        const mealMatch = /^(조|중|석|아침|점심|저녁)\s*[:：]\s*(.+)$/u.exec(part.trim());
         if (mealMatch?.[1] && mealMatch[2]) {
-          const slotMap: Record<string, MealSlot> = { 조: "breakfast", 중: "lunch", 석: "dinner" };
+          const slotMap: Record<string, MealSlot> = {
+            조: "breakfast",
+            아침: "breakfast",
+            중: "lunch",
+            점심: "lunch",
+            석: "dinner",
+            저녁: "dinner",
+          };
           const slot = slotMap[mealMatch[1]] ?? "lunch";
           meals.push({ slot, content: mealMatch[2].trim() });
         }

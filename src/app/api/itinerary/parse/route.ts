@@ -96,7 +96,7 @@ function scoreWorksheet(worksheet: ExcelJS.Worksheet): number {
 
   const sample = sampleLines.join("\n");
   const dayMatches = sample.match(/(?:제\s*)?\d{1,2}\s*일차?|DAY\s*\d{1,2}/giu)?.length ?? 0;
-  const mealMatches = sample.match(/(?:조식|중식|석식|조[:：]|중[:：]|석[:：]|\b[BLD]\s*[:：])/giu)?.length ?? 0;
+  const mealMatches = sample.match(/(?:조식|중식|석식|아침|점심|저녁|조[:：]|중[:：]|석[:：]|\b[BLD]\s*[:：])/giu)?.length ?? 0;
   const hotelMatches = sample.match(/(?:HOTEL|호텔|숙소|숙박|리조트)/giu)?.length ?? 0;
   const headerMatches = sample.match(/(?:일자|날짜|지역|교통편|시간|세부\s*일정|ITINERARY|MEALS?)/giu)?.length ?? 0;
   score += Math.min(60, dayMatches * 12);
@@ -169,7 +169,7 @@ function isMeaningfulPdfText(text: string): boolean {
   const cleaned = stripPdfPageMarkers(text);
   const compact = cleaned.replace(/\s+/gu, "");
   if (compact.length >= PDF_TEXT_MIN_CHARS) return true;
-  return compact.length >= 30 && /(?:견적|일정|호텔|출발|도착|조식|중식|석식|포함|불포함)/u.test(compact);
+  return compact.length >= 30 && /(?:견적|일정|호텔|출발|도착|조식|중식|석식|아침|점심|저녁|포함|불포함)/u.test(compact);
 }
 
 function extractOcrText(payload: OcrChatCompletionResponse): string {

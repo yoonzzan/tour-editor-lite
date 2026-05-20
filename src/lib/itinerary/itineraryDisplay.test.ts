@@ -38,4 +38,24 @@ describe("buildItineraryDisplayDays", () => {
     expect(day?.rows[0]?.detailDescription).toBe("가이드 동행");
     expect(day?.mealText).toBe("조식 호텔식\n중식 현지식");
   });
+
+  it("normalizes legacy morning lunch dinner labels for display", () => {
+    const days: DaySchedule[] = [
+      {
+        dayNo: 1,
+        date: "2026-04-22",
+        items: [
+          {
+            id: "meal-1",
+            type: "MEAL",
+            content: "아침 호텔식 점심 현지식 저녁 한식",
+          },
+        ],
+      },
+    ];
+
+    const [day] = buildItineraryDisplayDays(days);
+
+    expect(day?.mealText).toBe("조식 호텔식\n중식 현지식\n석식 한식");
+  });
 });

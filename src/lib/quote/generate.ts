@@ -4,7 +4,6 @@
 import { v4 as uuidv4 } from "uuid";
 import type { ItineraryData, QuoteCategory, QuoteItem, ScheduleItemType } from "@/types";
 import { getMealSlotRows } from "@/lib/itinerary/meal";
-import { mergeScheduleContent } from "@/lib/itinerary/contentDetail";
 import { DEFAULT_EXCHANGE_RATE_ID } from "@/lib/quote/currency";
 
 const TYPE_TO_CATEGORY: Record<ScheduleItemType, QuoteCategory> = {
@@ -44,10 +43,7 @@ function buildItemDescription(
     );
     if (parts.length > 0) return parts.join(" / ");
   }
-  if (item.type === "ACCOMMODATION" && item.hotel) {
-    return mergeScheduleContent(item.hotel, item.detail);
-  }
-  return mergeScheduleContent(item.content, item.detail) || "(내용 없음)";
+  return item.content.replace(/\s+/gu, " ").trim() || "(내용 없음)";
 }
 
 function buildMealItems(

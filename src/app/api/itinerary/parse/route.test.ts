@@ -61,6 +61,18 @@ async function makeXlsxWithNumericTimeCell(): Promise<File> {
   });
 }
 
+async function makeXlsxWithMealAliasLabels(): Promise<File> {
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet("일정");
+  worksheet.addRow(["제1일", "싱가포르", "전용버스", "", "호텔 아침 후", "", "아침:", "호텔식"]);
+  worksheet.addRow(["", "싱가포르", "전용버스", "12:00", "국립박물관 견학", "", "점심", "현지식"]);
+  worksheet.addRow(["", "싱가포르", "전용버스", "18:00", "야경 투어", "", "저녁:", "한식"]);
+  const buffer = await workbook.xlsx.writeBuffer();
+  return new File([buffer], "meal-aliases.xlsx", {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
+}
+
 async function makeXlsxWithSparseRows(): Promise<File> {
   const workbook = new ExcelJS.Workbook();
   const worksheet = workbook.addWorksheet("일정");
@@ -187,6 +199,48 @@ describe("/api/itinerary/parse", () => {
     expect(payload.diagnostics?.qualityScore).toBeUndefined();
     expect(payload.diagnostics?.candidateScores).toBeUndefined();
     expect(payload.itinerary?.days?.length).toBeGreaterThan(0);
+  });
+
+  it("fast-parses direct input meal aliases as meal slots", async () => {
+    process.env.OPENAI_API_KEY = "";
+    vi.resetModules();
+
+    const { POST } = await import("./route");
+    const formData = new FormData();
+    formData.append(
+      "text",
+      [
+        "1일차 2026-06-02",
+        "- 식사 | 아침: 호텔식",
+        "- 관광 | 국립박물관 견학",
+        "- 식사 | 점심: 현지식",
+        "- 식사 | 저녁: 한식",
+      ].join("\n"),
+    );
+
+    const request = {
+      headers: new Headers({ "x-access-code": "test-code" }),
+      formData: async () => formData,
+    } as unknown as NextRequest;
+
+    const response = await POST(request);
+    const payload = (await response.json()) as {
+      itinerary?: {
+        days?: Array<{
+          items?: Array<{
+            content?: string;
+            mealSlot?: string;
+            meal?: { breakfast?: string; lunch?: string; dinner?: string };
+          }>;
+        }>;
+      };
+    };
+
+    const items = payload.itinerary?.days?.[0]?.items ?? [];
+    expect(response.headers.get("x-itinerary-parser-source")).toBe("fast-text");
+    expect(items.find((item) => item.mealSlot === "breakfast")?.meal?.breakfast).toBe("호텔식");
+    expect(items.find((item) => item.mealSlot === "lunch")?.meal?.lunch).toBe("현지식");
+    expect(items.find((item) => item.mealSlot === "dinner")?.meal?.dinner).toBe("한식");
   });
 
   it("streams real parse progress events in progress mode", async () => {
@@ -358,6 +412,43 @@ describe("/api/itinerary/parse", () => {
     expect(items.find((item) => item.mealSlot === "breakfast")?.meal?.breakfast).toBe("호텔식");
     expect(items.find((item) => item.mealSlot === "lunch")?.meal?.lunch).toBe("현지식");
     expect(items.find((item) => item.mealSlot === "dinner")?.meal?.dinner).toBe("현지식");
+  });
+
+  it("parses uploaded spreadsheet meal aliases as breakfast lunch and dinner", async () => {
+    process.env.OPENAI_API_KEY = "";
+    vi.resetModules();
+
+    const { POST } = await import("./route");
+    const formData = new FormData();
+    formData.append("file", await makeXlsxWithMealAliasLabels());
+
+    const request = {
+      headers: new Headers({ "x-access-code": "test-code" }),
+      formData: async () => formData,
+    } as unknown as NextRequest;
+
+    const response = await POST(request);
+    const payload = (await response.json()) as {
+      itinerary?: {
+        days?: Array<{
+          items?: Array<{
+            content?: string;
+            mealSlot?: string;
+            meal?: { breakfast?: string; lunch?: string; dinner?: string };
+          }>;
+        }>;
+      };
+      error?: string;
+    };
+
+    expect(payload.error).toBeUndefined();
+    expect(response.status).toBe(200);
+    const items = payload.itinerary?.days?.[0]?.items ?? [];
+    expect(items.find((item) => item.mealSlot === "breakfast")?.meal?.breakfast).toBe("호텔식");
+    expect(items.find((item) => item.mealSlot === "lunch")?.meal?.lunch).toBe("현지식");
+    expect(items.find((item) => item.mealSlot === "dinner")?.meal?.dinner).toBe("한식");
+    expect(items.map((item) => item.content)).toContain("국립박물관 견학");
+    expect(items.map((item) => item.content)).toContain("야경 투어");
   });
 
   it("handles sparse Excel rows without failing on blank cells", async () => {

@@ -31,7 +31,7 @@ function parseLegacyMealText(content: string): MealValues {
   if (!text) return {};
 
   const values: MealValues = {};
-  const regex = /(조식|중식|석식)\s*[:：]?\s*([\s\S]*?)(?=\s*(?:조식|중식|석식)\s*[:：]?|$)/g;
+  const regex = /(조식|중식|석식|아침|점심|저녁)\s*[:：]?\s*([\s\S]*?)(?=\s*(?:조식|중식|석식|아침|점심|저녁)\s*[:：]?|$)/g;
 
   let match: RegExpExecArray | null = null;
   while ((match = regex.exec(text)) !== null) {
@@ -43,9 +43,9 @@ function parseLegacyMealText(content: string): MealValues {
 
     if (!value) continue;
 
-    if (label === "조식") values.breakfast = value;
-    if (label === "중식") values.lunch = value;
-    if (label === "석식") values.dinner = value;
+    if (label === "조식" || label === "아침") values.breakfast = value;
+    if (label === "중식" || label === "점심") values.lunch = value;
+    if (label === "석식" || label === "저녁") values.dinner = value;
   }
 
   return values;
