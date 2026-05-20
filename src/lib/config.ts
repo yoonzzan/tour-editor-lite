@@ -5,6 +5,8 @@ function optionalEnv(key: string, fallback = ""): string {
   return process.env[key] ?? fallback;
 }
 
+const quoteResponseOcrProvider = optionalEnv("QUOTE_RESPONSE_OCR_PROVIDER", "openai");
+
 export const config = {
   access: {
     code: optionalEnv("ACCESS_CODE"),
@@ -30,6 +32,7 @@ export const config = {
     parseTimeoutMs: Number(optionalEnv("OPENAI_PARSE_TIMEOUT_MS", "30000")),
   },
   quoteOcr: {
+    provider: quoteResponseOcrProvider === "local" ? "local" : "openai",
     pythonBin: optionalEnv("QUOTE_RESPONSE_OCR_PYTHON_BIN", "python3"),
     timeoutMs: Number(optionalEnv("QUOTE_RESPONSE_OCR_TIMEOUT_MS", "60000")),
   },

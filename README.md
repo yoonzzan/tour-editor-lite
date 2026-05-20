@@ -35,6 +35,7 @@ npm run dev
 | `OPENAI_MODEL` | AI 파싱 모델 |
 | `OPENAI_BASE_URL` | AI API base URL |
 | `OPENAI_PARSE_TIMEOUT_MS` | AI 파싱 timeout |
+| `QUOTE_RESPONSE_OCR_PROVIDER` | 견적답변 이미지 OCR provider. `openai`(기본) 또는 `local` |
 | `QUOTE_RESPONSE_OCR_PYTHON_BIN` | 견적답변 이미지 OCR에 사용할 Python 실행 파일. 기본값 `python3` |
 | `QUOTE_RESPONSE_OCR_TIMEOUT_MS` | 견적답변 이미지 OCR timeout. 기본값 `60000` |
 
@@ -93,4 +94,5 @@ src/
 - 이 저장소는 DB를 사용하지 않습니다.
 - 원본 견적 문서 샘플(`.hwp`, `.doc`, `.docx`)은 민감정보 가능성이 있어 기본적으로 git ignore합니다.
 - 업무 날짜와 표시 날짜는 `src/lib/date/korea.ts` 기준으로 처리합니다.
-- 견적답변 이미지 OCR은 로컬 Python 환경의 PaddleOCR을 사용합니다. 텍스트 입력 파싱은 PaddleOCR 설치 없이 동작합니다.
+- 견적답변 이미지 OCR은 기본적으로 서버 환경변수 `OPENAI_API_KEY`로 OpenAI Vision을 호출합니다. `NEXT_PUBLIC_OPENAI_API_KEY`처럼 브라우저에 노출되는 이름은 사용하지 마세요.
+- `QUOTE_RESPONSE_OCR_PROVIDER=local`로 설정하면 로컬 Python 환경의 PaddleOCR을 사용합니다. 텍스트 입력 파싱은 OCR provider 설정 없이 동작합니다.

@@ -19,6 +19,9 @@ function makeFormRequest(formData: FormData, accessCode = "test-code"): NextRequ
 }
 
 beforeEach(() => {
+  vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
+  vi.doUnmock("@/lib/quote/responseOcr");
   vi.stubEnv("ACCESS_CODE", "test-code");
   vi.resetModules();
 });

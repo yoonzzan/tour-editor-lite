@@ -89,6 +89,37 @@ describe("parseQuoteResponseText", () => {
     expect(result.quote.summary.subtotal).toBe(1650000);
   });
 
+  it("parses compact expected profit and spaced land profit labels", () => {
+    const result = parseQuoteResponseText({
+      text: [
+        "최종합계 1,127,000원",
+        "1인당 NET 1,050,000",
+        "1인예상수익 77,000",
+        "지상 요금 512,000원",
+        "지상비 500,000",
+        "랜드 수익 12,000",
+      ].join("\n"),
+      quoteHeader: { writtenAt: "2026-05-19", validUntil: "2026-05-19" },
+    });
+
+    expect(result.diagnostics.raw.summary.add1Amt).toBe(77000);
+    expect(result.diagnostics.raw.factors.map((factor) => [
+      factor.ansrKndCd,
+      factor.fareNm,
+      factor.persPerFare,
+      factor.add1Amt,
+      factor.totlAmt,
+    ])).toEqual([
+      ["LND", "지상비", 500000, 0, 500000],
+      ["LND", "랜드수익", 0, 12000, 12000],
+    ]);
+    expect(result.quote.items.map((item) => [item.category, item.description, item.unitPrice])).toEqual([
+      ["VEHICLE", "지상비", 500000],
+      ["VEHICLE", "랜드수익", 12000],
+      ["OTHER", "1인당 예상수익", 77000],
+    ]);
+  });
+
   it("parses meal prices from free-text remarks", () => {
     const result = parseQuoteResponseText({
       text: [
@@ -276,6 +307,152 @@ describe("parseQuoteResponseText", () => {
     ]);
     expect(result.quote.summary.total).toBe(1367600);
     expect(result.diagnostics.requiredCurrencyCodes).toEqual([]);
+  });
+
+  it("does not apply OpenAI OCR conditional or separate costs as base rows", () => {
+    const result = parseQuoteResponseText({
+      text: [
+        "최종합계 1,367,600원",
+        "환율기준 USD 1,500",
+        "1인당 NET 1,277,600",
+        "1인당 예상수익 90,000",
+        "항공 요금 395,100원",
+        "항공료 230,000",
+        "TAX 165,100",
+        "지상 요금 877,500원",
+        "지상비 877,500",
+        "랜드수익 0",
+        "공동 경비 요금 5,000원",
+        "보험료 5,000",
+        "조건부 추가 비용: 싱글차지 USD 310/인 별도",
+        "옵션 가능 조건: 간식 제공 시 USD 10/인 추가 비용",
+        "현지 지불: 캐디팁 100달러/인",
+        "불포함: 개인경비 및 매너팁 50,000원",
+        "지상비 USD 585/인 별도 조건",
+      ].join("\n"),
+      passengerCount: 20,
+      quoteHeader: { writtenAt: "2026-05-19", validUntil: "2026-05-19" },
+    });
+
+    expect(result.quote.items.map((item) => [item.category, item.description, item.unitPrice, item.currencyRateId])).toEqual([
+      ["FLIGHT", "항공료", 230000, "krw"],
+      ["FLIGHT", "TAX", 165100, "krw"],
+      ["VEHICLE", "지상비", 877500, "krw"],
+      ["OTHER", "보험료", 5000, "krw"],
+      ["OTHER", "1인당 예상수익", 90000, "krw"],
+    ]);
+    expect(result.diagnostics.requiredCurrencyCodes).toEqual([]);
+  });
+
+  it("normalizes OpenAI OCR label drift without parsing summary rows as quote items", () => {
+    const result = parseQuoteResponseText({
+      text: [
+        "견적 단번 정보",
+        "총 견적가 : 1,367,600원",
+        "환율정보 : USD 1,500",
+        "1인당 NET : 1,277,600",
+        "(6.58%)",
+        "최종 입금가 : 1,367,600",
+        "최종 안내사항",
+        "유효기간 : 2026-05-10 까지입니다.",
+        "항공료 395,100",
+        "요금1",
+        "항공료 230,000",
+        "TAX 165,100",
+        "합계",
+        "395,100",
+        "요금2",
+        "항공료 230,000",
+        "TAX 165,100",
+        "합계",
+        "395,100",
+        "비고사항",
+        "지상 요금 877,500원",
+        "전환코드 : 상세 306627",
+        "지불방식",
+        "지불방식",
+        "합계",
+        "지불방식",
+        "877,500",
+        "합계",
+        "877,500",
+        "비고사항",
+        "총 정리 금액 : 5,000원",
+        "총 금액 5,000원",
+        "인원수 : 0",
+        "대행비 공지 :",
+        "FOC 0",
+        "보험료",
+        "기타 0",
+        "합계",
+        "5,000",
+      ].join("\n"),
+      quoteHeader: { writtenAt: "2026-05-19", validUntil: "2026-05-19" },
+    });
+
+    expect(result.quote.header.validUntil).toBe("2026-05-10");
+    expect(result.diagnostics.raw.summary).toMatchObject({
+      currKndCd: "USD",
+      untAmt: 1500,
+      persPerFare: 1277600,
+      add1Amt: 90000,
+      totalSum: 1367600,
+    });
+    expect(result.quote.items.map((item) => [item.category, item.description, item.unitPrice, item.currencyRateId])).toEqual([
+      ["FLIGHT", "항공료", 230000, "krw"],
+      ["FLIGHT", "TAX", 165100, "krw"],
+      ["VEHICLE", "지상비", 877500, "krw"],
+      ["OTHER", "보험료", 5000, "krw"],
+      ["OTHER", "1인당 예상수익", 90000, "krw"],
+    ]);
+    expect(result.quote.summary.subtotal).toBe(1367600);
+    expect(result.quote.items.some((item) => item.description.includes("총 견적가"))).toBe(false);
+    expect(result.quote.items.some((item) => item.description.includes("환율정보"))).toBe(false);
+    expect(result.quote.items.some((item) => item.description.includes("총 정리 금액"))).toBe(false);
+    expect(result.quote.items.some((item) => item.description.includes("총 금액"))).toBe(false);
+    expect(result.diagnostics.requiredCurrencyCodes).toEqual([]);
+  });
+
+  it("recovers fee details and expected profit when OCR drops fee amounts onto the section total", () => {
+    const result = parseQuoteResponseText({
+      text: [
+        "견적 답변 정보",
+        "총 견적가 : 1,393,300원",
+        "환율 정보 : USD 1,500",
+        "1인당 NET : 1,303,300",
+        "최종 입금가 : 1,393,300",
+        "항공료 395,100",
+        "요금1",
+        "항공료 230,000",
+        "TAX 165,100",
+        "합계",
+        "395,100",
+        "비고사항",
+        "지상 요금 877,500원",
+        "지불방식",
+        "합계",
+        "877,500",
+        "비고사항",
+        "총 정리 금액 : 30,700원",
+        "인솔자 비용 25,700",
+        "보험요",
+        "기타 0",
+        "합계",
+        "30,700",
+      ].join("\n"),
+      quoteHeader: { writtenAt: "2026-05-19", validUntil: "2026-05-19" },
+    });
+
+    expect(result.diagnostics.raw.summary.add1Amt).toBe(90000);
+    expect(result.quote.items.map((item) => [item.category, item.description, item.unitPrice, item.currencyRateId])).toEqual([
+      ["FLIGHT", "항공료", 230000, "krw"],
+      ["FLIGHT", "TAX", 165100, "krw"],
+      ["VEHICLE", "지상비", 877500, "krw"],
+      ["OTHER", "인솔자비", 25700, "krw"],
+      ["OTHER", "보험료", 5000, "krw"],
+      ["OTHER", "1인당 예상수익", 90000, "krw"],
+    ]);
+    expect(result.quote.summary.subtotal).toBe(1393300);
   });
 
   it("skips exchange-rate summary rows and parses D-day meal section as meals", () => {
