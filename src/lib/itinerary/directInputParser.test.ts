@@ -1,0 +1,234 @@
+import { describe, expect, it } from "vitest";
+import { parseDirectInputItineraryWithDiagnostics } from "@/lib/itinerary/directInputParser";
+import type { ItineraryData, MealSlot } from "@/types";
+
+function contents(data: ItineraryData): string[] {
+  return data.days.flatMap((day) => day.items.map((item) => item.content));
+}
+
+function meal(data: ItineraryData, dayNo: number, slot: MealSlot): string | undefined {
+  const item = data.days
+    .find((day) => day.dayNo === dayNo)
+    ?.items.find((entry) => entry.type === "MEAL" && entry.mealSlot === slot);
+  return item?.meal?.[slot] ?? item?.content;
+}
+
+describe("direct input itinerary parser", () => {
+  it("merges separate date schedule and meal blocks without leaking cost notes", async () => {
+    const rawText = `고북수진 가는날 늦게 돌아와서 발맛사지 할 시간이 안돼서  2일차로 넣었습니다  고북수진 가는날 석식 현지식으로만 가능합니다
+유니버셜내 식사가 비싸서 $15로 책정했습니다
+북경대학교 방문정책이 자꾸 변동돼서   림박에 방문여부 정확하게  확인할수 있습니다
+
+북경대방문비용 $45/인, 유니버셜 입장료 $87(예상가)
+
+춘휘원호텔
+
+10/12  왕부정거리
+10/13  경산  자금성 천단공원   서커스   발맛사지
+10/14  이화원 고북수진이동 소주방 염색방등 사마대장성왕복케이블카
+10/15  북경대학교 유니버셜
+10/16   798거리
+
+10/12  석:오리구이$12
+10/13  중:현지식$10   석:샤브샤브무제한$10
+10/14   중:현지식$10   석:현지식$10
+10/15  중;자유식$15     석:자유식$15
+10/16  중:한식$13
+
+35인승 중형`;
+
+    const result = await parseDirectInputItineraryWithDiagnostics({ rawText, title: "직접입력 일정" });
+    const itinerary = result.itinerary;
+    const allContents = contents(itinerary).join("\n");
+
+    expect(itinerary.days.map((day) => day.date)).toEqual([
+      "2026-10-12",
+      "2026-10-13",
+      "2026-10-14",
+      "2026-10-15",
+      "2026-10-16",
+    ]);
+    expect(itinerary.basics.accommodation.hotel).toContain("춘휘원호텔");
+    expect(itinerary.basics.flight.localVehicle).toBe("35인승 중형");
+    expect(allContents).toContain("왕부정거리");
+    expect(allContents).toContain("북경대학교 유니버셜");
+    expect(meal(itinerary, 1, "dinner")).toBe("오리구이");
+    expect(meal(itinerary, 4, "lunch")).toBe("자유식");
+    expect(meal(itinerary, 5, "lunch")).toBe("한식");
+    expect(allContents).not.toContain("$");
+    expect(allContents).not.toContain("방문정책");
+    expect(itinerary.basics.notes).toContain("방문정책");
+    expect(itinerary.basics.notes).toContain("방문비용");
+  });
+
+  it("parses quotation style simple schedules and keeps metadata separate", async () => {
+    const rawText = `* 견적코드 : QA00691268001 / 기준 코드 : X
+
+1.출발일 : 2026.10.07
+2.인원 : 10+0
+3.차량 : 35인승 버스 1대, 가이드 1명
+4.호텔 : 노보텔 타이하 1박 또는 동급, 하얏트 플레이스 하롱 2박 또는 동급/ 2인1실 기준 (5트윈 / 싱차 14만원)
+5.포함 : 기가팁
+6.불포함 : 개인여행경비
+7.비고 : 쇼핑 2회(침향/잡화) / 노옵션 / 인솔자 무
+8.지상비 : 행사비 20만원 + 호텔비 14만원 = 총 34만원
+** 인원 감소 시 차액 크게 발생합니다.
+
+*** 간단 일정 ***
+1일차 : 하노이 도착, 호텔 이동 및 휴식
+2일차 : 옌뜨 케이블카, 하롱베이 이동, 수상인형극, 전신 90분(팁 6$ 별도), 하얏트 망고빙수 / 옌뜨 정식, 무제한 삼겹살
+3일차 : 단독 목선배 탑승, 비경, 승솟동굴, 티톱섬, 하선, 하롱파크, 홍가이 재래시장, 하얏트호텔 루프탑(스낵+맥주1잔) / 선상식+씨푸드, 오삼불고기
+4일차 : 하노이 이동, 관저, 한기둥, 바딘, 호안끼엠 호수, 36거리, 스트릿카, 성요셉 성당, 롯데전망대 / 분짜정식(꽌안응온), 해물순두부`;
+
+    const { itinerary } = await parseDirectInputItineraryWithDiagnostics({ rawText, title: "직접입력 일정" });
+    const allContents = contents(itinerary).join("\n");
+
+    expect(itinerary.days).toHaveLength(4);
+    expect(itinerary.overview.travelPeriod).toEqual({ start: "2026-10-07", end: "2026-10-10" });
+    expect(itinerary.overview.passengers.adult).toBe(10);
+    expect(itinerary.basics.flight.localVehicle).toBe("35인승 버스 1대, 가이드 1명");
+    expect(itinerary.basics.accommodation.hotel).toContain("노보텔 타이하");
+    expect(itinerary.basics.included).toBe("기가팁");
+    expect(itinerary.basics.excluded).toBe("개인여행경비");
+    expect(itinerary.basics.shoppingCenters).toBe(2);
+    expect(itinerary.basics.optionalTour).toBe("노옵션");
+    expect(itinerary.overview.fare.adultPerPerson).toBe(340000);
+    expect(allContents).toContain("하노이 도착");
+    expect(allContents).toContain("롯데전망대");
+    expect(meal(itinerary, 2, "lunch")).toBe("옌뜨 정식");
+    expect(meal(itinerary, 2, "dinner")).toBe("무제한 삼겹살");
+    expect(allContents).not.toContain("견적코드");
+    expect(allContents).not.toContain("지상비");
+  });
+
+  it("combines separate itinerary and meal sections by day", async () => {
+    const rawText = `날짜 : 26.06.29
+인원 : 16명
+호텔 : 베스트웨스턴 3박 또는 동급 / 디럭스 8방 기준 - RQ조건
+ㄴ싱차 : 21만원
+항공 : -
+차량 : 35인승 1대
+포함 : 가기팁(한국인가이드), 혼똔섬+케이블카, 키스브릿지, 바구니배, 전신마사지1시간(팁별도)*1회, 전일정 중/석식
+불포 : 개인경비 및 매너팁, 자유일정시 차량&가이드
+
+* 쇼핑 1회, 노옵션 조건
+
+[일정]
+1일차 : 공항도착/가이드미팅 후 호텔투숙
+2일차 : 오전자유일정/중식/혼똔섬+케이블카/석식/키스브릿지/선셋타운/부이페스트야시장
+3일차 : 오전자유일정/중식/바구니배/전신마사지1시간(팁별도)/그랜드월드관광/석식
+4일차 : 체크아웃 가이드미팅/중식/사오비치/호국사/코코넛수용소/석식/즈엉동야시장/공항으로 이동
+5일차 : 인천도착
+
+[식사]
+2일차 중식 분짜$10 / 석식 한식$10
+3일차 중식 현지식$10 / 석식 한식$10
+4일차 중식 현지식$10 / 석식 한식$10`;
+
+    const { itinerary } = await parseDirectInputItineraryWithDiagnostics({ rawText, title: "직접입력 일정" });
+    const allContents = contents(itinerary).join("\n");
+
+    expect(itinerary.days).toHaveLength(5);
+    expect(itinerary.overview.travelPeriod).toEqual({ start: "2026-06-29", end: "2026-07-03" });
+    expect(itinerary.overview.passengers.adult).toBe(16);
+    expect(itinerary.basics.accommodation.hotel).toContain("베스트웨스턴");
+    expect(itinerary.basics.flight.localVehicle).toBe("35인승 1대");
+    expect(itinerary.basics.shoppingCenters).toBe(1);
+    expect(itinerary.basics.optionalTour).toBe("노옵션");
+    expect(allContents).toContain("혼똔섬+케이블카");
+    expect(allContents).toContain("즈엉동야시장");
+    expect(meal(itinerary, 2, "lunch")).toBe("분짜");
+    expect(meal(itinerary, 4, "dinner")).toBe("한식");
+    expect(allContents).not.toContain("$10");
+    expect(allContents).not.toContain("싱차");
+    expect(itinerary.basics.notes).toContain("싱차");
+  });
+
+  it("parses month-day rows and keeps meal cost standards in notes", async () => {
+    const rawText = `10명 단독
+
+1. 호텔 : 4성급 호텔 기준  <예정 호텔 참고>
+  로마  -Ergife Palace Hotel 혹은 동급 (4*)
+  피렌체  - Wyndham Garden Florence 혹은 동급 (4*)
+  파도바 - Four Points by Sheraton Padova 혹은 동급 (4*)
+  밀라노 - Best Western Premier Hotel Royal Santina 혹은 동급 (4*)
+2. 차량 : 대형버스
+3. 가이드 : 한국인 가이드, 현지인 가이드
+4. 식사 : 호텔 조식+중&석식 9회 기준 (중식 20EUR // 석식 25EUR 책정)
+5. 입장지 : 바티칸박물관+예약,  베니스 바포레토, 베니스 수상택시
+6. 기타포함 : 각종TIP , 이태리 체크포인트, 호텔 TAX
+
+6/18 로마 공항 - 호텔
+6/19 로마 전일
+6/20 로마 - 피엔차 - 시에나 - 피렌체
+6/21 피렌체 - 파도바
+6/22 파도바 - 베니스 - 밀라노
+6/23 밀라노 - 꼬모 - 밀라노 공항
+
+[불포함]
+첫날, 마지막날 석식 불포함 기준입니다.
+여행용 송수신기 비용 불포함 기준입니다.`;
+
+    const { itinerary } = await parseDirectInputItineraryWithDiagnostics({ rawText, title: "직접입력 일정" });
+    const allContents = contents(itinerary).join("\n");
+
+    expect(itinerary.days.map((day) => day.date)).toEqual([
+      "2026-06-18",
+      "2026-06-19",
+      "2026-06-20",
+      "2026-06-21",
+      "2026-06-22",
+      "2026-06-23",
+    ]);
+    expect(itinerary.overview.passengers.adult).toBe(10);
+    expect(itinerary.basics.flight.localVehicle).toBe("대형버스");
+    expect(itinerary.basics.accommodation.hotel).toContain("Ergife Palace Hotel");
+    expect(itinerary.basics.included).toContain("바티칸박물관");
+    expect(itinerary.basics.included).toContain("호텔 TAX");
+    expect(allContents).toContain("로마 공항");
+    expect(allContents).toContain("밀라노 공항");
+    expect(allContents).not.toContain("20EUR");
+    expect(allContents).not.toContain("불포함");
+    expect(itinerary.basics.notes).toContain("20EUR");
+    expect(itinerary.basics.excluded).toContain("첫날, 마지막날 석식 불포함");
+  });
+
+  it("parses decorated day lines and keeps excluded dinner as notes", async () => {
+    const rawText = `<3박 4일>
+▶지상비 :  1인 124,000엔(P/P)
+▶인원 : 6명+1 드라이빙가이드 기준
+▶기간 : 2026년 10월 8일 ~ 4일간
+▶호텔(RQ) : 1-2일차 : 스기노이 호텔 니지칸 또는 동급 (RQ조건)
+                     3일차 : 몬토레 라 스루 호텔 또는 동급 (RQ조건)
+▶차량 : 하이에스 4일 * 1대이용
+▶일정 : 요청해주신 일정과 동일합니다.
+└1일차 : 중식 - 가마도지옥 - 유노하나 - 체크인
+└2일차 : 벳부 사파리 - 중식 - 유후인 - 호텔복귀
+   => 연휴 등 혼잡한 날에는 정글버스 탑승(선착순)이 불가할 수 있습니다.
+└3일차 : 다자이후 - 중식 - 오후 자유일정
+└4일차 : 조식 후 공항이동
+▶비고
+* 3일차 석식 불포함 입니다.
+* 노팁, 노옵션, 노쇼핑기준입니다.
+
+※ 지상 전체 RQ요청 조건
+※ 인원 변경 시 요금 변동됩니다.`;
+
+    const { itinerary } = await parseDirectInputItineraryWithDiagnostics({ rawText, title: "직접입력 일정" });
+    const allContents = contents(itinerary).join("\n");
+
+    expect(itinerary.days).toHaveLength(4);
+    expect(itinerary.overview.travelPeriod).toEqual({ start: "2026-10-08", end: "2026-10-11" });
+    expect(itinerary.overview.passengers.adult).toBe(6);
+    expect(itinerary.overview.passengers.escort).toBe(1);
+    expect(itinerary.basics.accommodation.hotel).toContain("스기노이 호텔");
+    expect(itinerary.basics.accommodation.hotel).toContain("몬토레 라 스루 호텔");
+    expect(itinerary.basics.flight.localVehicle).toBe("하이에스 4일 * 1대이용");
+    expect(itinerary.basics.shoppingCenters).toBe(0);
+    expect(itinerary.basics.optionalTour).toBe("노옵션");
+    expect(allContents).toContain("가마도지옥");
+    expect(allContents).toContain("공항이동");
+    expect(allContents).not.toContain("석식 불포함");
+    expect(itinerary.basics.notes).toContain("3일차 석식 불포함");
+  });
+});

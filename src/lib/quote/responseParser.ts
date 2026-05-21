@@ -181,7 +181,7 @@ function sectionText(text: string, start: RegExp, end: RegExp): string {
 }
 
 function isNonBaseCostLine(line: string): boolean {
-  return /(?:불포함사항|불포함|개인적인\s*비용|개인\s*경비|싱글\s*차지|싱글차지|캐디\s*팁|캐디팁|매너\s*팁|매너팁|조건부|조건\s*부|별도|추가\s*비용|추가비용|추가\s*요금|추가요금|추가됩니다|추가\s*됩니다|추가\s*될|추가\s*시|추가시|제공\s*시|제공시|옵션\s*가능|선택\s*관광|현지\s*지불|현지\s*결제)/u.test(line);
+  return /(?:불포함사항|불포함|개인적인\s*비용|개인\s*경비|싱글\s*차지|싱글차지|캐디\s*팁|캐디팁|매너\s*팁|매너팁|조건부|조건\s*부|별도|추가\s*비용|추가비용|추가\s*요금|추가요금|추가됩니다|추가\s*됩니다|추가\s*될|추가\s*시|추가시|제공\s*시|제공시|옵션\s*가능|선택\s*관광|현지\s*지불|현지\s*결제|^\s*상세\s*[:：]|\d+\s*인\s*이상\s*시|\d+\s*명\s*이상\s*시)/u.test(line);
 }
 
 function removeNonBaseCostLines(text: string): string {
@@ -326,6 +326,7 @@ function parseFactorLines(text: string): QuoteAnswerFactorRaw[] {
 
   let knownFeeAmount = 0;
   let hasInsuranceFactor = false;
+  let hasPositiveEtcFactor = false;
   for (const { spec, money } of feeMoneys) {
     if (!money.found) continue;
     const duplicatedTotalAsEtc =
@@ -336,9 +337,10 @@ function parseFactorLines(text: string): QuoteAnswerFactorRaw[] {
     const amount = duplicatedTotalAsEtc ? 0 : money.amount;
     if (amount > 0 && spec.fareNm !== "기타") knownFeeAmount += amount;
     if (amount > 0 && spec.fareNm === "보험료") hasInsuranceFactor = true;
+    if (amount > 0 && spec.fareNm === "기타") hasPositiveEtcFactor = true;
     factors.push(makeFactor(spec.ansrKndCd, spec.fareNm, amount, 0, amount, "", money.currencyCode));
   }
-  if (!hasInsuranceFactor && feeTotal > knownFeeAmount && /보험료/u.test(feeSection)) {
+  if (!hasInsuranceFactor && feeTotal > knownFeeAmount && (/보험료/u.test(feeSection) || (knownFeeAmount > 0 && !hasPositiveEtcFactor))) {
     const inferredInsuranceAmount = feeTotal - knownFeeAmount;
     factors.push(makeFactor("FEE", "보험료", inferredInsuranceAmount, 0, inferredInsuranceAmount, "", "KRW"));
   }

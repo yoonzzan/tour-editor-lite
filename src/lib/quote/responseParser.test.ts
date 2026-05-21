@@ -89,6 +89,93 @@ describe("parseQuoteResponseText", () => {
     expect(result.quote.summary.subtotal).toBe(1650000);
   });
 
+  it("treats OCR-misread common expense section totals as section labels, not quote rows", () => {
+    const result = parseQuoteResponseText({
+      text: [
+        "최종합계 1,650,000원",
+        "1인당 NET 1,607,000",
+        "1인당 예상수익 43,000",
+        "공통 경비 요금 10,000 원",
+        "인솔자비",
+        "FOC",
+        "보험료 10,000",
+        "기타 0",
+      ].join("\n"),
+      quoteHeader: { writtenAt: "2026-05-19", validUntil: "2026-05-19" },
+    });
+
+    expect(result.quote.items.map((item) => [item.description, item.unitPrice])).toEqual([
+      ["보험료", 10000],
+      ["1인당 예상수익", 43000],
+    ]);
+    expect(result.quote.items.some((item) => item.description.includes("공통 경비 요금"))).toBe(false);
+    expect(result.diagnostics.raw.factors.map((factor) => [
+      factor.ansrKndCd,
+      factor.fareNm,
+      factor.totlAmt,
+    ])).toEqual([
+      ["FEE", "보험료", 10000],
+      ["FEE", "기타", 0],
+    ]);
+  });
+
+  it("recovers missing insurance from fee total when OCR drops the insurance row", () => {
+    const result = parseQuoteResponseText({
+      text: [
+        "견적 단번 정보",
+        "최종합계 870,000원",
+        "환율기준 USD 1,500",
+        "1인당 NET 814,500",
+        "1인당 예상수익 55,500 (6.37%)",
+        "최종 입금가 870,000",
+        "최종 안내사항",
+        "유효기간 2026-05-01 까지입니다.",
+        "항공 요금 464,000원",
+        "요금",
+        "항공료 270,000",
+        "TAX 194,000",
+        "합계 464,000",
+        "비고사항",
+        "(6월25일 출발 2명 예약건) KE0841CTNAO-H44/",
+        "2 KE 843 L25UN 4 ICTNAO DK1 1305 1345 25UN E 0 739 M",
+        "3 KE 844 L27UN 6 TAICDO DK1 1455 1740 27UN E 0 739 M",
+        "SEE RTSVC",
+        "지상 요금 307,500원",
+        "전직역 308155",
+        "지상비 307,500",
+        "요금",
+        "지상비 0",
+        "합계",
+        "지상비 307,500",
+        "비고사항",
+        "인원: 20+1=20명(307500)",
+        "상세: 1인당 15,000원, 2인 이상 시 1인당 12,500원, 3인 이상 시 10,000원, 4인 이상 시 9,500원, 5인 이상 시 9,000원",
+        "중간 경비 요금 43,000원",
+        "요금 0",
+        "FOC 28,000",
+        "비고사항",
+        "(비고:3인 이상 시 foc 적용됩니다.)",
+        "답변",
+        "첨부파일",
+        "첨부파일",
+      ].join("\n"),
+      quoteHeader: { writtenAt: "2026-05-19", validUntil: "2026-05-19" },
+    });
+
+    expect(result.quote.items.map((item) => [item.category, item.description, item.unitPrice])).toEqual([
+      ["FLIGHT", "항공료", 270000],
+      ["FLIGHT", "TAX", 194000],
+      ["VEHICLE", "지상비", 307500],
+      ["OTHER", "FOC", 28000],
+      ["OTHER", "보험료", 15000],
+      ["OTHER", "1인당 예상수익", 55500],
+    ]);
+    expect(result.quote.items.some((item) => item.description.includes("상세:"))).toBe(false);
+    expect(result.quote.items.some((item) => item.description.includes("중간 경비 요금"))).toBe(false);
+    expect(result.diagnostics.warnings).toEqual([]);
+    expect(result.quote.summary.total).toBe(870000);
+  });
+
   it("parses compact expected profit and spaced land profit labels", () => {
     const result = parseQuoteResponseText({
       text: [

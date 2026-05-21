@@ -1,6 +1,6 @@
 "use client";
 
-// T-201: SearchPopup 껍데기 + 탭 구조 (상품코드 / URL / 파일첨부 / 직접입력)
+// T-201: SearchPopup 껍데기 + 탭 구조 (직접입력 / 파일첨부 / URL / 상품코드)
 // T-202: 상품코드 입력 UI
 // T-205: 조회 결과 미리보기 패널
 // T-206: "이 일정으로 시작" → useEditorStore
@@ -527,7 +527,7 @@ const DIRECT_INPUT_TEMPLATE = [
 ].join("\n");
 
 export function SearchPopup({ onClose }: Props) {
-  const [activeTab, setActiveTab] = useState<Tab>("code");
+  const [activeTab, setActiveTab] = useState<Tab>("direct");
   const loadFromProduct = useEditorStore((s) => s.loadFromProduct);
 
   // ── 상품코드 탭 상태 ──────────────────────────────────
@@ -895,10 +895,10 @@ export function SearchPopup({ onClose }: Props) {
         <div className="hub-tabs flex shrink-0">
           {(
             [
-              { key: "code", label: "상품코드 조회" },
-              { key: "url", label: "URL 입력" },
-              { key: "file", label: "파일 첨부" },
               { key: "direct", label: "직접 입력" },
+              { key: "file", label: "파일 첨부" },
+              { key: "url", label: "URL 입력" },
+              { key: "code", label: "상품코드 조회" },
             ] as { key: Tab; label: string }[]
           ).map(({ key, label }) => (
             <button

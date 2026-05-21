@@ -6,7 +6,7 @@ import type { NextRequest } from "next/server";
 import { config } from "@/lib/config";
 import { requireConverterAccess } from "@/lib/converter/access";
 import { parseItineraryWithDiagnostics, type ItineraryParseResult } from "@/lib/itinerary/aiParser";
-import { parseItineraryText } from "@/lib/itinerary/importParser";
+import { parseDirectInputItineraryWithDiagnostics } from "@/lib/itinerary/directInputParser";
 import { spreadsheetRowsToText } from "@/lib/itinerary/spreadsheetText";
 
 export const runtime = "nodejs";
@@ -449,35 +449,6 @@ async function extractRawText(formData: FormData): Promise<{ rawText: string; ti
   return { rawText, title: title ?? fileTitle, isTextInput: false };
 }
 
-const HEADER_POLLUTION_RE =
-  /^(날짜|출발일|인원|호텔|차량|조건|포함|불포함|쇼핑|싱글차지|지상비|서커스|vip|팁현지)/iu;
-
-function isFastResultGarbage(itinerary: import("@/types").ItineraryData): boolean {
-  const firstDay = itinerary.days[0];
-  if (!firstDay || firstDay.items.length === 0) return true;
-  const pollutedCount = firstDay.items.filter((it) =>
-    HEADER_POLLUTION_RE.test(it.content),
-  ).length;
-  return pollutedCount / firstDay.items.length > 0.4;
-}
-
-function tryFastParse(rawText: string): ItineraryParseResult | null {
-  try {
-    const itinerary = parseItineraryText(rawText);
-    const hasContent =
-      itinerary.days.length > 0 &&
-      itinerary.days.some((d) => d.items.length > 0);
-    if (!hasContent) return null;
-    if (isFastResultGarbage(itinerary)) return null;
-    return {
-      itinerary,
-      diagnostics: { source: "fast-text", aiAttempted: false },
-    };
-  } catch {
-    return null;
-  }
-}
-
 function isDebugRequest(req: NextRequest): boolean {
   const requestWithUrl = req as NextRequest & {
     nextUrl?: {
@@ -548,11 +519,9 @@ function streamParseProgress(req: NextRequest): Response {
         send({ stage: "extracting", message: progressMessage("extracting") });
         const { rawText, title, isTextInput } = await extractRawText(formData);
         if (isTextInput) {
-          const fast = tryFastParse(rawText);
-          if (fast) {
-            send({ stage: "completed", message: progressMessage("completed"), result: toPublicParseResult(fast, includeDebug) });
-            return;
-          }
+          const result = await parseDirectInputItineraryWithDiagnostics({ rawText, title });
+          send({ stage: "completed", message: progressMessage("completed"), result: toPublicParseResult(result, includeDebug) });
+          return;
         }
         send({ stage: "analyzing", message: progressMessage("analyzing") });
         const result = await parseItineraryWithDiagnostics({ rawText, title });
@@ -595,12 +564,14 @@ export async function POST(req: NextRequest) {
     const formData = await req.formData();
     const { rawText, title, isTextInput } = await extractRawText(formData);
     if (isTextInput) {
-      const fast = tryFastParse(rawText);
-      if (fast) {
-        return NextResponse.json(toPublicParseResult(fast, isDebugRequest(req)), {
-          headers: { "x-itinerary-parser-source": "fast-text", "x-itinerary-parser-score": "" },
-        });
-      }
+      const result = await parseDirectInputItineraryWithDiagnostics({ rawText, title });
+      const publicResult = toPublicParseResult(result, isDebugRequest(req));
+      return NextResponse.json(publicResult, {
+        headers: {
+          "x-itinerary-parser-source": result.diagnostics.source,
+          "x-itinerary-parser-score": String(result.diagnostics.qualityScore ?? ""),
+        },
+      });
     }
     const result = await parseItineraryWithDiagnostics({ rawText, title });
     const publicResult = toPublicParseResult(result, isDebugRequest(req));

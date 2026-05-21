@@ -130,6 +130,8 @@ export function normalizeQuoteResponseAliases(text: string): string {
     .replace(/총\s*금액/gu, "공동 경비 요금")
     .replace(/항공\s*요금/gu, "항공 요금")
     .replace(/지상\s*요금/gu, "지상 요금")
+    .replace(/중간\s*경비\s*요금/gu, "공동 경비 요금")
+    .replace(/공통\s*경비\s*요금/gu, "공동 경비 요금")
     .replace(/공동\s*경비\s*요금/gu, "공동 경비 요금");
 }
 
