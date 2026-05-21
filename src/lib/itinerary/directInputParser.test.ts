@@ -107,6 +107,51 @@ describe("direct input itinerary parser", () => {
     expect(allContents).not.toContain("지상비");
   });
 
+  it("splits compact hyphenated simple schedules into meals and activities", async () => {
+    const rawText = `요청 동일 일정 기준
+
+- 행사일: 2026-11-21
+- 인원: 성인13+아동7
+- 호텔:윈덤 다낭 골든베이 5박 (트윈4개+트리플4개) 사용 기준 (룸당 싱차 22만원)
+- 쇼핑 & 옵션: 쇼핑 1회+노옵션 조건
+- 차량:  45인승
+- 포함: 가기팁, 전신마사지1시간, 한강크루즈, 바나산,  바구니배, 호이안야경투어(소원등), 씨클로, 팩 동일 식사
+
+< 간단일정 >
+1일차: 미팅후 호텔 이동후 휴식
+2일차: 조식후 오전자유-중식(분짜+반세오)-오행산관광-호이안이동후 호이안관광(씨클로, 바구니배, 야경투어, 소원등)-석식(호이안가정식)-호텔휴식
+3일차: 조식후 전일자유일정(중석식불포함)
+4일차: 조식후 바나산 이동-바나산 관광-중식(포시즌스뷔페)- 다낭이동-전신마사지1시간-석식(무제한삼겹살)-호텔휴식
+5일차: 조식후 전일자유일정(중석식불포함)
+6일차: 조식후 오전자유-중식(미케비치씨푸드)- 다낭시내관광(다낭대성당,미케비치,손짜)-석식(한식)-한강크루즈-공항이동`;
+
+    const { itinerary } = await parseDirectInputItineraryWithDiagnostics({ rawText, title: "직접입력 일정" });
+    const dayTwoItems = itinerary.days.find((day) => day.dayNo === 2)?.items ?? [];
+    const dayTwoSummary = dayTwoItems.map((item) =>
+      item.type === "MEAL"
+        ? `${item.type}:${item.mealSlot}:${item.content}`
+        : `${item.type}:${item.content}`,
+    );
+
+    expect(itinerary.days).toHaveLength(6);
+    expect(itinerary.overview.travelPeriod).toEqual({ start: "2026-11-21", end: "2026-11-26" });
+    expect(itinerary.overview.passengers.adult).toBe(13);
+    expect(itinerary.overview.passengers.child).toBe(7);
+    expect(itinerary.basics.flight.localVehicle).toBe("45인승");
+    expect(itinerary.basics.accommodation.hotel).toContain("윈덤 다낭 골든베이");
+    expect(itinerary.basics.included).toContain("한강크루즈");
+    expect(itinerary.basics.shoppingCenters).toBe(1);
+    expect(itinerary.basics.optionalTour).toBe("노옵션");
+    expect(dayTwoSummary).toEqual([
+      "OTHER:오전자유",
+      "MEAL:lunch:분짜+반세오",
+      "SIGHTSEEING:오행산관광",
+      "SIGHTSEEING:호이안이동후 호이안관광(씨클로, 바구니배, 야경투어, 소원등)",
+      "MEAL:dinner:호이안가정식",
+      "OTHER:호텔휴식",
+    ]);
+  });
+
   it("combines separate itinerary and meal sections by day", async () => {
     const rawText = `날짜 : 26.06.29
 인원 : 16명
