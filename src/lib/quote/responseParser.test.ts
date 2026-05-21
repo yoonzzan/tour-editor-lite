@@ -435,6 +435,52 @@ describe("parseQuoteResponseText", () => {
     expect(result.quote.summary.total).toBe(1050000);
   });
 
+  it("keeps main airfare separate when land section is OCR-labeled as individual fare", () => {
+    const result = parseQuoteResponseText({
+      text: [
+        "견적 단편 정보",
+        "최종견적가: 7,740,000",
+        "환율기준 : CAD 1,120",
+        "1인당 NET : 7,462,690",
+        "1인당 예상수익 : 277,310 (3.5%)",
+        "최종 입금가 : 7,740,000",
+        "항공 요금",
+        "항공료 1,280,000 합계 2,518,900",
+        "TAX 1,238,900 합계 0",
+        "TAX 0 합계 2,518,900",
+        "비고사항",
+        "개별 요금",
+        "개별 요금: 4,642,400",
+        "견적번호: 38017",
+        "요금02",
+        "지상비 4,642,400 합계 4,642,400",
+        "비고사항",
+        "3) 총 합계: 301,390",
+        "항공료 256,390",
+        "FOC 0",
+        "보험료 20,000",
+        "기타 25,000 합계 301,390",
+        "비고사항",
+        "1) 보험료 : ETI 2종",
+        "답변",
+        "첨부파일",
+      ].join("\n"),
+      quoteHeader: { writtenAt: "2026-05-19", validUntil: "2026-05-19" },
+    });
+
+    expect(result.quote.items.map((item) => [item.category, item.description, item.unitPrice])).toEqual([
+      ["FLIGHT", "항공료", 1280000],
+      ["FLIGHT", "TAX", 1238900],
+      ["VEHICLE", "지상비", 4642400],
+      ["OTHER", "인솔자비", 256390],
+      ["OTHER", "보험료", 20000],
+      ["OTHER", "기타", 25000],
+      ["OTHER", "1인당 예상수익", 277310],
+    ]);
+    expect(result.diagnostics.warnings).toEqual([]);
+    expect(result.quote.summary.total).toBe(7740000);
+  });
+
   it("infers meal quantity from passenger text when no passenger count is provided", () => {
     const result = parseQuoteResponseText({
       text: [
