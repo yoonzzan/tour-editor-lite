@@ -346,6 +346,79 @@ describe("direct input itinerary parser", () => {
     expect(itinerary.days.every((day) => day.items.length === 0)).toBe(true);
   });
 
+  it("accepts common structured direct-input label aliases", async () => {
+    const rawText = `<<상품 정보>>
+*일정명*
+라벨 변형 일정
+
+*여행 도시*
+- 후쿠오카
+
+*여행 기간*
+2026-06-01 ~ 2026-06-02
+
+*성인 1인 총 상품가*
+300,000원
+
+
+<<항공/교통>>
+*항공출발*
+부산공항
+
+*귀국편*
+후쿠오카공항
+
+*현지 차량*
+전용차량
+
+
+<<숙박>>
+*숙박 호텔*
+- 하카타 호텔
+
+*호텔 등급*
+3성급
+
+*객실 이용인원*
+2인1실
+
+
+<<포함/불포함>>
+*포함*
+- 조식
+
+*불포*
+- 개인경비
+
+*옵션투어*
+- 없음
+
+*쇼핑횟수*
+1
+
+*비고*
+- 라벨 변형 테스트`;
+
+    const { itinerary } = await parseDirectInputItineraryWithDiagnostics({ rawText, title: "직접입력 일정" });
+
+    expect(itinerary.header.groupName).toBe("라벨 변형 일정");
+    expect(itinerary.overview.cities).toBe("후쿠오카");
+    expect(itinerary.overview.travelPeriod).toEqual({ start: "2026-06-01", end: "2026-06-02" });
+    expect(itinerary.overview.fare.adultPerPerson).toBe(300000);
+    expect(itinerary.basics.flight.departure).toBe("부산공항");
+    expect(itinerary.basics.flight.arrival).toBe("후쿠오카공항");
+    expect(itinerary.basics.flight.localVehicle).toBe("전용차량");
+    expect(itinerary.basics.accommodation.hotel).toBe("하카타 호텔");
+    expect(itinerary.basics.accommodation.grade).toBe("3성급");
+    expect(itinerary.basics.accommodation.occupancy).toBe("2인1실");
+    expect(itinerary.basics.included).toBe("조식");
+    expect(itinerary.basics.excluded).toBe("개인경비");
+    expect(itinerary.basics.optionalTour).toBe("없음");
+    expect(itinerary.basics.shoppingCenters).toBe(1);
+    expect(itinerary.basics.notes).toBe("라벨 변형 테스트");
+    expect(itinerary.days.map((day) => day.date)).toEqual(["2026-06-01", "2026-06-02"]);
+  });
+
   it("routes structured file-attachment preview text without collapsing it into one day", async () => {
     const rawText = `<<상품 정보>>
 *상품명*

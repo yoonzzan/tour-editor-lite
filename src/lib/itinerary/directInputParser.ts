@@ -809,7 +809,7 @@ function readStructuredField(lines: string[], label: string): string {
 }
 
 function readStructuredFieldLines(lines: string[], label: string): string[] {
-  const labelPattern = new RegExp(`^\\*+\\s*${label}\\s*\\*+$`, "u");
+  const labelPattern = structuredLabelPattern(label);
   const startIndex = lines.findIndex((line) => labelPattern.test(line));
   if (startIndex < 0) return [];
   const values: string[] = [];
@@ -820,6 +820,31 @@ function readStructuredFieldLines(lines: string[], label: string): string[] {
     values.push(stripDecorativePrefix(line));
   }
   return values.map(cleanText).filter(Boolean);
+}
+
+function structuredLabelPattern(label: string): RegExp {
+  const aliases: Record<string, string[]> = {
+    상품명: ["상품명", "상품 이름", "일정명", "행사명"],
+    방문도시: ["방문도시", "방문 도시", "여행도시", "여행 도시", "지역"],
+    기간: ["기간", "여행기간", "여행 기간", "행사기간", "행사 기간"],
+    "성인1인 총 상품가": ["성인1인 총 상품가", "성인 1인 총 상품가", "성인1인상품가", "성인 상품가"],
+    "항공 출발": ["항공 출발", "항공출발", "출국편", "출발편"],
+    "항공 귀국": ["항공 귀국", "항공귀국", "항공 도착", "항공도착", "귀국편", "리턴편", "도착편"],
+    차량: ["차량", "현지차량", "현지 차량"],
+    숙박호텔: ["숙박호텔", "숙박 호텔", "호텔", "호텔명"],
+    호텔등급: ["호텔등급", "호텔 등급", "등급"],
+    "1객실이용인원": ["1객실이용인원", "1객실 이용인원", "객실이용인원", "객실 이용인원"],
+    포함사항: ["포함사항", "포함 사항", "포함내역", "포함 내역", "포함"],
+    불포함사항: ["불포함사항", "불포함 사항", "불포함내역", "불포함 내역", "불포함", "불포"],
+    선택관광: ["선택관광", "선택 관광", "옵션투어", "옵션 투어"],
+    "쇼핑센터 방문 수": ["쇼핑센터 방문 수", "쇼핑센터 방문수", "쇼핑센터 수", "쇼핑 센터 수", "쇼핑횟수", "쇼핑 횟수"],
+    유의사항: ["유의사항", "유의 사항", "주의사항", "주의 사항", "비고", "참고사항", "참고 사항"],
+  };
+  const labels = aliases[label] ?? [label];
+  const source = labels
+    .map((entry) => entry.replace(/\s+/gu, "\\s*"))
+    .join("|");
+  return new RegExp(`^\\*+\\s*(?:${source})\\s*\\*+$`, "u");
 }
 
 function structuredTravelPeriod(lines: string[], days: DaySchedule[]): ItineraryData["overview"]["travelPeriod"] | null {
