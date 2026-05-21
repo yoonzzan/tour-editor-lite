@@ -58,6 +58,8 @@ interface LabeledMoneyValue extends MoneyValue {
 }
 
 const ZERO_MONEY: LabeledMoneyValue = { amount: 0, currencyCode: "KRW", found: false };
+const FEE_SECTION_LABEL_PATTERN = /공동\s*경비\s*요금|공동경비\s*요금|TC\s*비용/iu;
+const FEE_SECTION_END_PATTERN = /답변\s*첨부파일|첨부파일/iu;
 
 function normalizeText(text: string): string {
   return normalizeQuoteResponseAliases(text)
@@ -200,6 +202,38 @@ function sectionText(text: string, start: RegExp, end: RegExp): string {
   return afterStart.slice(0, startMatch[0].length + endMatch.index);
 }
 
+function sectionTextOrEmpty(text: string, start: RegExp, end: RegExp): string {
+  const startMatch = start.exec(text);
+  if (!startMatch) return "";
+  return sectionText(text, start, end);
+}
+
+function fallbackFeeSectionText(text: string): string {
+  const landMatch = /지상\s*요금|지상요금/iu.exec(text);
+  const searchStart = landMatch ? landMatch.index + landMatch[0].length : 0;
+  const searchText = text.slice(searchStart);
+  const feeMarker = /인솔자비|보험료|부가세|(?<![\p{L}\p{N}])FOC(?![\p{L}\p{N}])/iu.exec(searchText);
+  if (!feeMarker) return "";
+
+  const markerIndex = searchStart + feeMarker.index;
+  const lineStart = text.lastIndexOf("\n", markerIndex);
+  const sectionStart = Math.max(searchStart, lineStart >= 0 ? lineStart + 1 : markerIndex);
+  const fallbackText = text.slice(sectionStart);
+  const endMatch = FEE_SECTION_END_PATTERN.exec(fallbackText);
+  return endMatch ? fallbackText.slice(0, endMatch.index) : fallbackText;
+}
+
+function moneyAfterLastLabel(text: string, label: RegExp): MoneyValue | null {
+  const matches = Array.from(text.matchAll(asGlobalRegex(label)));
+  for (let index = matches.length - 1; index >= 0; index -= 1) {
+    const match = matches[index];
+    if (!match) continue;
+    const money = parseLeadingMoney(segmentAfterLabel(text, match.index + match[0].length));
+    if (money) return money;
+  }
+  return null;
+}
+
 function isNonBaseCostLine(line: string): boolean {
   return /(?:불포함사항|불포함|개인적인\s*비용|개인\s*경비|싱글\s*차지|싱글차지|캐디\s*팁|캐디팁|매너\s*팁|매너팁|조건부|조건\s*부|별도|추가\s*비용|추가비용|추가\s*요금|추가요금|추가됩니다|추가\s*됩니다|추가\s*될|추가\s*시|추가시|제공\s*시|제공시|옵션\s*가능|선택\s*관광|현지\s*지불|현지\s*결제|^\s*상세\s*[:：]|\d+\s*인\s*이상\s*시|\d+\s*명\s*이상\s*시)/u.test(line);
 }
@@ -316,7 +350,8 @@ function parseFactorLines(text: string): QuoteAnswerFactorRaw[] {
   const normalized = removeNonBaseCostLines(text).replace(/[ \t]+/gu, " ");
   const airSection = sectionText(normalized, /항공\s*요금|항공요금/iu, /지상\s*요금|지상요금|공동\s*경비\s*요금|공동경비\s*요금|답변\s*첨부파일|첨부파일/iu);
   const landSection = sectionText(normalized, /지상\s*요금|지상요금/iu, /공동\s*경비\s*요금|공동경비\s*요금|답변\s*첨부파일|첨부파일/iu);
-  const feeSection = sectionText(normalized, /공동\s*경비\s*요금|공동경비\s*요금|TC\s*비용/iu, /답변\s*첨부파일|첨부파일/iu);
+  const explicitFeeSection = sectionTextOrEmpty(normalized, FEE_SECTION_LABEL_PATTERN, FEE_SECTION_END_PATTERN);
+  const feeSection = explicitFeeSection || fallbackFeeSectionText(normalized);
 
   for (const spec of QUOTE_RESPONSE_BASIC_AMOUNT_SPECS.filter((entry) => entry.ansrKndCd === "AIR")) {
     const money = bestLabeledMoney(airSection, spec.label);
@@ -348,7 +383,7 @@ function parseFactorLines(text: string): QuoteAnswerFactorRaw[] {
     factors[landBaseIndex] = makeFactor("LND", "지상비", landTotal, 0, landTotal, "", "KRW");
   }
 
-  const feeTotal = sectionLeadingAmount(feeSection, /공동\s*경비\s*요금|공동경비\s*요금|TC\s*비용/iu);
+  const feeTotal = sectionLeadingAmount(feeSection, FEE_SECTION_LABEL_PATTERN) || moneyAfterLastLabel(feeSection, /합계/iu)?.amount || 0;
   const feeMoneys = QUOTE_RESPONSE_BASIC_AMOUNT_SPECS.filter((entry) => entry.ansrKndCd === "FEE").map((spec) => ({
     spec,
     money: bestLabeledMoney(feeSection, spec.label),

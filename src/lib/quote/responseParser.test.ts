@@ -393,6 +393,48 @@ describe("parseQuoteResponseText", () => {
     expect(result.quote.summary.total).toBe(750000);
   });
 
+  it("recovers insurance when OCR drops common fee title and reads insurance as VAT", () => {
+    const result = parseQuoteResponseText({
+      text: [
+        "최종합계 : 1,050,000원",
+        "환율기준 : USD 0",
+        "1인당 NET : 984,000",
+        "1인당 예상수익 : 66,000 (6.28%)",
+        "최종 입금가 : 1,050,000",
+        "항공 요금",
+        "요금1",
+        "항공료 40,000",
+        "TAX 406,000",
+        "합계",
+        "446,000",
+        "지상 요금 총액 : 490,000원",
+        "지상비 490,000",
+        "랜드수익 0",
+        "합계",
+        "490,000",
+        "비고사항",
+        "기타 FOC 38,000",
+        "부가세",
+        "10,000",
+        "기타 0",
+        "합계",
+        "48,000",
+      ].join("\n"),
+      quoteHeader: { writtenAt: "2026-05-19", validUntil: "2026-05-19" },
+    });
+
+    expect(result.quote.items.map((item) => [item.category, item.description, item.unitPrice])).toEqual([
+      ["FLIGHT", "항공료", 40000],
+      ["FLIGHT", "TAX", 406000],
+      ["VEHICLE", "지상비", 490000],
+      ["OTHER", "FOC", 38000],
+      ["OTHER", "보험료", 10000],
+      ["OTHER", "1인당 예상수익", 66000],
+    ]);
+    expect(result.diagnostics.warnings).toEqual([]);
+    expect(result.quote.summary.total).toBe(1050000);
+  });
+
   it("infers meal quantity from passenger text when no passenger count is provided", () => {
     const result = parseQuoteResponseText({
       text: [

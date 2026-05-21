@@ -121,6 +121,7 @@ export function normalizeQuoteResponseAliases(text: string): string {
     .replace(/1\s*인\s*(?:당\s*)?예상\s*수익/gu, "1인당 예상수익")
     .replace(/랜드\s*수익/gu, "랜드수익")
     .replace(/인솔자\s*비(?:용)?/gu, "인솔자비")
+    .replace(/(?<![가-힣])보\s*료/gu, "보험료")
     .replace(/보험\s*(?:료|요)/gu, "보험료")
     .replace(/최종\s*합계/gu, "최종합계")
     .replace(/최종\s*입금가/gu, "최종 입금가")
