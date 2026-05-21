@@ -1,0 +1,92 @@
+[
+  {
+    "name": "compact-danang",
+    "file": "compact-danang.txt",
+    "period": {
+      "start": "2026-11-21",
+      "end": "2026-11-26"
+    },
+    "passengers": {
+      "adult": 13,
+      "child": 7
+    },
+    "vehicle": "45인승",
+    "shoppingCenters": 1,
+    "optionalTour": "노옵션",
+    "days": {
+      "2": [
+        "OTHER:오전자유",
+        "MEAL:lunch:분짜+반세오",
+        "SIGHTSEEING:오행산관광",
+        "SIGHTSEEING:호이안이동후 호이안관광(씨클로, 바구니배, 야경투어, 소원등)",
+        "MEAL:dinner:호이안가정식",
+        "OTHER:호텔휴식"
+      ],
+      "6": [
+        "OTHER:오전자유",
+        "MEAL:lunch:미케비치씨푸드",
+        "SIGHTSEEING:다낭시내관광(다낭대성당,미케비치,손짜)",
+        "MEAL:dinner:한식",
+        "SIGHTSEEING:한강크루즈",
+        "TRANSFER:공항이동"
+      ]
+    }
+  },
+  {
+    "name": "compact-no-hyphen",
+    "file": "compact-no-hyphen.txt",
+    "period": {
+      "start": "2026-12-01",
+      "end": "2026-12-02"
+    },
+    "passengers": {
+      "adult": 8,
+      "child": 2
+    },
+    "vehicle": "25인승",
+    "shoppingCenters": 0,
+    "optionalTour": "노옵션",
+    "days": {
+      "1": [
+        "OTHER:오전자유",
+        "MEAL:lunch:한식",
+        "SIGHTSEEING:오행산관광",
+        "MEAL:dinner:현지식",
+        "OTHER:호텔휴식"
+      ],
+      "2": [
+        "TRANSFER:공항이동"
+      ]
+    }
+  },
+  {
+    "name": "compact-punctuation",
+    "file": "compact-punctuation.txt",
+    "period": {
+      "start": "2026-12-10",
+      "end": "2026-12-11"
+    },
+    "passengers": {
+      "adult": 6,
+      "child": 0
+    },
+    "vehicle": "",
+    "shoppingCenters": 0,
+    "optionalTour": "노옵션",
+    "days": {
+      "1": [
+        "TRANSFER:공항이동",
+        "MEAL:lunch:현지식",
+        "SIGHTSEEING:한강크루즈",
+        "MEAL:dinner:한식",
+        "OTHER:호텔휴식"
+      ],
+      "2": [
+        "OTHER:오전자유",
+        "MEAL:lunch:분짜",
+        "SIGHTSEEING:바나산 관광",
+        "TRANSFER:다낭이동"
+      ]
+    }
+  }
+]

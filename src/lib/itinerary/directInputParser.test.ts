@@ -1,6 +1,25 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseDirectInputItineraryWithDiagnostics } from "@/lib/itinerary/directInputParser";
 import type { ItineraryData, MealSlot } from "@/types";
+
+interface DirectInputGoldenCase {
+  name: string;
+  file: string;
+  period: {
+    start: string;
+    end: string;
+  };
+  passengers: {
+    adult: number;
+    child: number;
+  };
+  vehicle: string;
+  shoppingCenters: number;
+  optionalTour: string;
+  days: Record<string, string[]>;
+}
 
 function contents(data: ItineraryData): string[] {
   return data.days.flatMap((day) => day.items.map((item) => item.content));
@@ -28,7 +47,44 @@ function itemSummary(data: ItineraryData, dayNo: number): string[] {
   );
 }
 
+function readGoldenCases(): DirectInputGoldenCase[] {
+  const fixtureRoot = join(process.cwd(), "tests/fixtures/direct-input");
+  const parsed: unknown = JSON.parse(readFileSync(join(fixtureRoot, "expected.json"), "utf8"));
+  if (!Array.isArray(parsed)) return [];
+  return parsed.filter((entry): entry is DirectInputGoldenCase =>
+    typeof entry === "object"
+    && entry !== null
+    && typeof (entry as DirectInputGoldenCase).name === "string"
+    && typeof (entry as DirectInputGoldenCase).file === "string"
+    && typeof (entry as DirectInputGoldenCase).period?.start === "string"
+    && typeof (entry as DirectInputGoldenCase).period?.end === "string"
+    && typeof (entry as DirectInputGoldenCase).passengers?.adult === "number"
+    && typeof (entry as DirectInputGoldenCase).passengers?.child === "number"
+    && typeof (entry as DirectInputGoldenCase).vehicle === "string"
+    && typeof (entry as DirectInputGoldenCase).shoppingCenters === "number"
+    && typeof (entry as DirectInputGoldenCase).optionalTour === "string"
+    && typeof (entry as DirectInputGoldenCase).days === "object"
+    && (entry as DirectInputGoldenCase).days !== null
+  );
+}
+
 describe("direct input itinerary parser", () => {
+  it.each(readGoldenCases())("matches direct-input golden fixture: $name", async (testCase) => {
+    const fixtureRoot = join(process.cwd(), "tests/fixtures/direct-input");
+    const rawText = readFileSync(join(fixtureRoot, testCase.file), "utf8");
+    const { itinerary } = await parseDirectInputItineraryWithDiagnostics({ rawText, title: "직접입력 일정" });
+
+    expect(itinerary.overview.travelPeriod).toEqual(testCase.period);
+    expect(itinerary.overview.passengers.adult).toBe(testCase.passengers.adult);
+    expect(itinerary.overview.passengers.child).toBe(testCase.passengers.child);
+    expect(itinerary.basics.flight.localVehicle).toBe(testCase.vehicle);
+    expect(itinerary.basics.shoppingCenters).toBe(testCase.shoppingCenters);
+    expect(itinerary.basics.optionalTour).toBe(testCase.optionalTour);
+    for (const [dayNo, expectedItems] of Object.entries(testCase.days)) {
+      expect(itemSummary(itinerary, Number(dayNo))).toEqual(expectedItems);
+    }
+  });
+
   it("merges separate date schedule and meal blocks without leaking cost notes", async () => {
     const rawText = `고북수진 가는날 늦게 돌아와서 발맛사지 할 시간이 안돼서  2일차로 넣었습니다  고북수진 가는날 석식 현지식으로만 가능합니다
 유니버셜내 식사가 비싸서 $15로 책정했습니다

@@ -15,7 +15,7 @@
     "test:parser": "npm run test:quote-response && npm run test:itinerary-direct && npm run test:itinerary-golden",
     "test:quote-response": "vitest run src/lib/quote/responseParser.test.ts src/lib/quote/responseTemplate.test.ts src/app/api/quote-response/parse/route.test.ts",
     "test:watch": "vitest",
-    "verify:parser": "npm run test:itinerary-direct && npm run quality && git diff --check",
+    "verify:parser": "npm run test:parser && npm run quality && git diff --check",
     "quality": "bash scripts/quality-gate.sh"
   },
   "dependencies": {
