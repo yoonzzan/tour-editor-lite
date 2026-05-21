@@ -13,6 +13,12 @@ function meal(data: ItineraryData, dayNo: number, slot: MealSlot): string | unde
   return item?.meal?.[slot] ?? item?.content;
 }
 
+function nonMealContents(data: ItineraryData): string[] {
+  return data.days.flatMap((day) =>
+    day.items.filter((item) => item.type !== "MEAL").map((item) => item.content),
+  );
+}
+
 describe("direct input itinerary parser", () => {
   it("merges separate date schedule and meal blocks without leaking cost notes", async () => {
     const rawText = `고북수진 가는날 늦게 돌아와서 발맛사지 할 시간이 안돼서  2일차로 넣었습니다  고북수진 가는날 석식 현지식으로만 가능합니다
@@ -230,5 +236,29 @@ describe("direct input itinerary parser", () => {
     expect(allContents).toContain("공항이동");
     expect(allContents).not.toContain("석식 불포함");
     expect(itinerary.basics.notes).toContain("3일차 석식 불포함");
+  });
+
+  it("extracts bracketed slash-separated meals from direct day lines", async () => {
+    const rawText = `출발일 : 2026.10.07
+인원 : 10명
+
+[일정]
+1일차 : 하노이 도착
+2일차 : 하롱 이동, 마사지 [중: 베트남 가정식 / 석: 소불고기 정식]
+3일차 : 바구니배 체험 [중: 껌땀 정식 / 석: 닭백숙]
+4일차 : 하노이 시내관광 [중: 반쎄오+쌀국수 정식 / 석: 무제한 삼겹살]`;
+
+    const { itinerary } = await parseDirectInputItineraryWithDiagnostics({ rawText, title: "직접입력 일정" });
+    const activityContents = nonMealContents(itinerary).join("\n");
+
+    expect(meal(itinerary, 2, "lunch")).toBe("베트남 가정식");
+    expect(meal(itinerary, 2, "dinner")).toBe("소불고기 정식");
+    expect(meal(itinerary, 3, "lunch")).toBe("껌땀 정식");
+    expect(meal(itinerary, 3, "dinner")).toBe("닭백숙");
+    expect(meal(itinerary, 4, "lunch")).toBe("반쎄오+쌀국수 정식");
+    expect(meal(itinerary, 4, "dinner")).toBe("무제한 삼겹살");
+    expect(activityContents).toContain("마사지");
+    expect(activityContents).not.toContain("[중:");
+    expect(activityContents).not.toContain("]");
   });
 });

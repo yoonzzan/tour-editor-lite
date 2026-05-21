@@ -62,6 +62,7 @@ type DirectSection = "schedule" | "meal" | "excluded" | "notes" | null;
 
 const TODAY = todayInKorea();
 const CURRENT_YEAR = currentYearInKorea();
+const MEAL_LABEL_PATTERN = "(조식|중식|석식|아침|점심|저녁|조(?!식)|중(?!식)|석(?!식)|B|L|D)";
 
 function cleanText(value: string): string {
   return value
@@ -215,7 +216,7 @@ function stripPrice(value: string): string {
 }
 
 function sanitizeMealValue(value: string, slot: MealSlot): string {
-  const text = stripPrice(value);
+  const text = cleanText(stripPrice(value).replace(/^\s*\[+|\]+\s*$/gu, ""));
   if (!text || /^후(?:\s|$)/u.test(text)) return mealSlotLabel(slot);
   return text;
 }
@@ -224,9 +225,8 @@ function parseMealEntries(value: string): ParsedMeal[] {
   const text = cleanText(value).replace(/;/gu, ":");
   if (isStandaloneMealMarker(text)) return [];
   const meals: ParsedMeal[] = [];
-  const labelPattern = "(조식|중식|석식|아침|점심|저녁|조(?!식)|중(?!식)|석(?!식)|B|L|D)";
   const labeled = new RegExp(
-    `(?:^|[\\s/,])${labelPattern}\\s*[:：]?\\s*([^/,]+?)(?=(?:\\s+${labelPattern}\\s*[:：]?)|\\s*[/,]|$)`,
+    `(?:^|[\\s/,\\[]+)${MEAL_LABEL_PATTERN}\\s*[:：]?\\s*([^/,\\]]+?)(?=(?:\\s+${MEAL_LABEL_PATTERN}\\s*[:：]?)|\\s*[/,\\]]|$)`,
     "giu",
   );
 
@@ -369,10 +369,25 @@ function splitActivityText(value: string): string[] {
     .filter(Boolean);
 }
 
+function extractBracketedMealBlocks(value: string): { body: string; meals: ParsedMeal[] } {
+  const meals: ParsedMeal[] = [];
+  const body = value.replace(/\[[^\]]+\]/gu, (block) => {
+    const parsedMeals = parseMealEntries(block);
+    if (parsedMeals.length === 0) return block;
+    meals.push(...parsedMeals);
+    return " ";
+  });
+  return { body: cleanText(body), meals };
+}
+
 function parseSimpleBody(body: string): { activities: string[]; meals: ParsedMeal[] } {
-  const slashParts = body.split(/\s*\/\s*/u).map(cleanText).filter(Boolean);
   const activities: string[] = [];
   const meals: ParsedMeal[] = [];
+  const extracted = extractBracketedMealBlocks(body);
+  meals.push(...extracted.meals);
+  if (!extracted.body) return { activities, meals };
+
+  const slashParts = extracted.body.split(/\s*\/\s*/u).map(cleanText).filter(Boolean);
 
   if (slashParts.length === 2 && looksLikeMealList(slashParts[1] ?? "")) {
     activities.push(...splitActivityText(slashParts[0] ?? ""));
