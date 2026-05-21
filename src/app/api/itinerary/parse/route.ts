@@ -109,7 +109,7 @@ function scoreWorksheet(worksheet: ExcelJS.Worksheet): number {
 function isPrimaryScheduleWorksheetName(name: string): boolean {
   const sheetName = name.replace(/\s+/gu, "");
   if (/(샘플|sample|예시)/iu.test(sheetName)) return false;
-  return /(일정표|상세일정|세부일정)/u.test(sheetName);
+  return /^(?:일정|일정표|상세일정|세부일정)$/u.test(sheetName);
 }
 
 function selectWorksheets(workbook: ExcelJS.Workbook): ExcelJS.Worksheet[] {

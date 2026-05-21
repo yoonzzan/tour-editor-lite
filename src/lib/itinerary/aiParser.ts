@@ -3644,9 +3644,12 @@ export async function parseItineraryWithDiagnostics({ rawText, title }: ParseWit
   const evidenceSummary = collectItineraryEvidence(preprocessedText);
   const evidenceText = formatEvidenceForPrompt(evidenceSummary);
   const evidenceCounts = countEvidenceItems(evidenceSummary);
+  const noKeyFallbackCandidate: ItineraryParserCandidate = /(?:^\s*\[sheet:[^\]]+\]|\t)/imu.test(preprocessedText)
+    ? "deterministic-tabular"
+    : "deterministic-narrative";
   if (!config.ai.apiKey) {
     const itinerary = applyRawMealOverrides(parseFallbackFromRaw(preprocessedText, title), preprocessedText);
-    const candidateScore = scoreParsedItinerary("deterministic-narrative", itinerary, preprocessedText);
+    const candidateScore = scoreParsedItinerary(noKeyFallbackCandidate, itinerary, preprocessedText);
     return withDiagnosticsQuality(
       {
         source: "fallback-no-key",
@@ -3655,7 +3658,7 @@ export async function parseItineraryWithDiagnostics({ rawText, title }: ParseWit
       },
       itinerary,
       preprocessedText,
-      "deterministic-narrative",
+      noKeyFallbackCandidate,
       [candidateScore],
     );
   }

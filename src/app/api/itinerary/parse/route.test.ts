@@ -154,6 +154,31 @@ async function makeXlsxWithPrimaryScheduleAndNoisySampleSheets(): Promise<File> 
   });
 }
 
+async function makeXlsxWithPlainScheduleAndCostDetailSheets(): Promise<File> {
+  const workbook = new ExcelJS.Workbook();
+  const schedule = workbook.addWorksheet("일정");
+  schedule.addRow(["상품명", "", "", "도쿄4일"]);
+  schedule.addRow(["일자", "지역", "교통편", "시간", "일정", "식사"]);
+  schedule.addRow(["제1일", "인천", "전용차량", "10:00", "인천공항 출발"]);
+  schedule.addRow(["10/17", "나리타", "전용차량", "13:00", "나리타 공항 도착 후 전용차량 탑승", "중: 현지식"]);
+  schedule.addRow(["", "도쿄", "", "", "아사쿠사 센소지 및 나카미세 도오리", "석: 현지식"]);
+  schedule.addRow(["제2일", "도쿄", "전용차량", "09:00", "호텔조식 후 전용차량 탑승", "조: 호텔식"]);
+  schedule.addRow(["10/18", "하코네", "", "", "후지산 오합목"]);
+
+  const detail = workbook.addWorksheet("상세");
+  detail.addRow(["구분", "식당", "단가", "횟수", "인원", "합계"]);
+  detail.addRow(["식사", "중식", 3000, 4, 27, 324000]);
+  detail.addRow(["식사", "석식", 5000, 3, 27, 405000]);
+  detail.addRow(["구분", "버스", "단가", "이용일", "대수", "합계"]);
+  detail.addRow(["차량", "대형버스", 95000, 4, 1, 380000]);
+  detail.addRow(["합 계", "", "", "", "", 3386700]);
+
+  const buffer = await workbook.xlsx.writeBuffer();
+  return new File([buffer], "plain-schedule-with-cost-detail.xlsx", {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
+}
+
 async function readProgressEvents(response: Response): Promise<Array<{ stage?: string; message?: string; result?: unknown; error?: string }>> {
   const text = await response.text();
   return text
@@ -600,6 +625,94 @@ describe("/api/itinerary/parse", () => {
     expect(itemText).not.toContain("견적 호텔");
     expect(itemText).not.toContain("[미팅보드");
     expect(itemText).not.toContain("Springhill By Marriott Centreville/Chantilly");
+  });
+
+  it("treats a plain 일정 sheet as primary and excludes cost detail sheets", async () => {
+    process.env.OPENAI_API_KEY = "";
+    vi.resetModules();
+
+    const { POST } = await import("./route");
+    const formData = new FormData();
+    formData.append("file", await makeXlsxWithPlainScheduleAndCostDetailSheets());
+
+    const request = {
+      headers: new Headers({ "x-access-code": "test-code" }),
+      formData: async () => formData,
+    } as unknown as NextRequest;
+
+    const response = await POST(request);
+    const payload = (await response.json()) as {
+      itinerary?: {
+        days?: Array<{
+          items?: Array<{ content?: string }>;
+        }>;
+      };
+      error?: string;
+    };
+
+    const itemText = payload.itinerary?.days
+      ?.flatMap((day) => day.items ?? [])
+      .map((item) => item.content ?? "")
+      .join("\n") ?? "";
+
+    expect(payload.error).toBeUndefined();
+    expect(response.status).toBe(200);
+    expect(itemText).toContain("나리타 공항 도착");
+    expect(itemText).toContain("후지산 오합목");
+    expect(itemText).not.toContain("대형버스");
+    expect(itemText).not.toContain("3386700");
+    expect(itemText).not.toContain("3000 | 4 | 27");
+  });
+
+  it("routes pasted spreadsheet text through the tabular parser instead of direct narrative parsing", async () => {
+    process.env.OPENAI_API_KEY = "";
+    vi.resetModules();
+
+    const { POST } = await import("./route");
+    const formData = new FormData();
+    formData.append(
+      "text",
+      [
+        "[sheet:일정]",
+        "일자\t지역\t교통편\t시간\t일정\t식사",
+        "제1일\t인천\t전용차량\t10:00\t인천공항 출발",
+        "10/17\t나리타\t전용차량\t13:00\t나리타 공항 도착 후 전용차량 탑승\t중: 현지식",
+        "",
+        "[sheet:상세]",
+        "구분\t식당\t단가\t횟수\t인원\t합계",
+        "식사\t중식\t3000\t4\t27\t324000",
+      ].join("\n"),
+    );
+
+    const request = {
+      headers: new Headers({ "x-access-code": "test-code" }),
+      formData: async () => formData,
+      nextUrl: new URL("http://localhost/api/itinerary/parse?debug=1"),
+    } as unknown as NextRequest;
+
+    const response = await POST(request);
+    const payload = (await response.json()) as {
+      diagnostics?: { source?: string; selectedCandidate?: string };
+      itinerary?: {
+        days?: Array<{
+          items?: Array<{ content?: string }>;
+        }>;
+      };
+      error?: string;
+    };
+
+    const itemText = payload.itinerary?.days
+      ?.flatMap((day) => day.items ?? [])
+      .map((item) => item.content ?? "")
+      .join("\n") ?? "";
+
+    expect(payload.error).toBeUndefined();
+    expect(response.status).toBe(200);
+    expect(payload.diagnostics?.source).toBe("fallback-no-key");
+    expect(payload.diagnostics?.selectedCandidate).toBe("deterministic-tabular");
+    expect(itemText).toContain("나리타 공항 도착");
+    expect(itemText).not.toContain("나리타 공항 도착 후 전용차량 탑승 나리타 공항 도착 후 전용차량 탑승");
+    expect(itemText).not.toContain("3000 4 27 324000");
   });
 
   it("uses OCR fallback when uploaded PDF has no extractable text", async () => {

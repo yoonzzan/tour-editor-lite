@@ -738,6 +738,20 @@ function looksLikeTypedDirectInput(rawText: string): boolean {
   return /(?:^|\n)\s*-\s*(?:이동|관광|식사|숙박|기타)\s*\|/u.test(rawText);
 }
 
+function looksLikeSpreadsheetDirectInput(rawText: string): boolean {
+  if (/^\s*\[sheet:[^\]]+\]/imu.test(rawText)) return true;
+
+  const lines = rawText
+    .split(/\r?\n/u)
+    .map(cleanText)
+    .filter(Boolean);
+  const tabularLines = lines.filter((line) => (line.match(/\t/gu)?.length ?? 0) >= 2);
+  if (tabularLines.length < 2) return false;
+
+  const sample = tabularLines.slice(0, 20).join("\n");
+  return /(?:일자|날짜|지역|교통편|시간|일\s*정|식\s*사|제\s*\d{1,2}\s*일)/u.test(sample);
+}
+
 function tryLegacyFastDirectParse(rawText: string): ItineraryParseResult | null {
   if (!looksLikeTypedDirectInput(rawText)) return null;
   try {
@@ -759,6 +773,10 @@ function tryLegacyFastDirectParse(rawText: string): ItineraryParseResult | null 
 export async function parseDirectInputItineraryWithDiagnostics(
   input: ParseDirectInputParams,
 ): Promise<ItineraryParseResult> {
+  if (looksLikeSpreadsheetDirectInput(input.rawText)) {
+    return parseItineraryWithDiagnostics(input);
+  }
+
   const fast = tryLegacyFastDirectParse(input.rawText);
   if (fast) return fast;
 
