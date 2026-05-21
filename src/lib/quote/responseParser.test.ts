@@ -304,19 +304,93 @@ describe("parseQuoteResponseText", () => {
       { category: "MEAL", description: "석식 삼겹살무제한", quantity: 12, unitPrice: 10, currencyRateId: "usd", date: "2026-10-10" },
       { category: "MEAL", description: "중식 산동요리", quantity: 12, unitPrice: 10, currencyRateId: "usd", date: "2026-10-11" },
       { category: "MEAL", description: "석식 양꼬치무제한", quantity: 12, unitPrice: 10, currencyRateId: "usd", date: "2026-10-11" },
-      {
-        category: "OTHER",
-        description: "-호텔: 교주매리어트3박(2인1실)혹은동급//싱차15만원",
-        quantity: 1,
-        unitPrice: 150000,
-        currencyRateId: "krw",
-        date: "",
-      },
     ]);
     expect(rows.some((row) => row.description === "랜드수익")).toBe(false);
     expect(rows.some((row) => row.description === "기타")).toBe(false);
     expect(rows.some((row) => row.description.includes("-인원: 12+0"))).toBe(false);
+    expect(rows.some((row) => row.description.includes("싱차15만원"))).toBe(false);
     expect(rows.some((row) => row.description.includes("여행자보험1억원"))).toBe(false);
+  });
+
+  it("ignores deployed OCR agency remarks and only imports confirmed quote grid amounts", () => {
+    const result = parseQuoteResponseText({
+      text: [
+        "최종합계 750,000원",
+        "환율기준 USD 0",
+        "스탭프로모션관리 697,500",
+        "1인당 예상수익 52,500 (7%)",
+        "최종 입금가 750,000",
+        "대리점 공개",
+        "└ 벌금 수준 : 300만동~500만동 수준 (18만~30만원), 기기 즉시 압수 및 폐기",
+        "항공 요금 457,500원",
+        "요금1 VJ",
+        "항공료 457,500",
+        "TAX 0 합계 457,500",
+        "대리점 공개 20+0 * 인천출발 VJ시리즈 10석 / 인디비5석 / 부산발5석 평균가로 드립니다.",
+        "› 시리즈블록운임 40만원 (유류포함) ★5/29 이전 선발권 조건 특가운임 ( 이후 운임 미정 )",
+        "› 실시간 인디비 운임 59만원 (유류포함 ) B+W CLS",
+        "› 실시간 인디비 운임: 53만원 ( 유류포함) Z+I CLS",
+        "지상 요금 230,000원",
+        "전지역 상세 308148",
+        "지상비 230,000",
+        "랜드수익 0 합계 230,000",
+        "대리점 공개 * 견적코드 : QA00691325001 / 기준 코드 : AVP205260705VJZ",
+        "4.호텔 : 모데나 바이 프레이저 빈펄 호텔 1박 또는 동급, kk 사파 2박 또는 동급/ 2인1실 기준 (10트윈 / 싱사 14만원)",
+        "8. 지상비 : 행사비 9만원 + 호텔비 14만원 = 총 23만원 ★",
+        "공동 경비 요금 10,000원",
+        "인솔자비 0",
+        "FOC 0",
+        "보험료 10,000",
+        "기타 0 합계 10,000",
+        "대리점 공개 * 1억원 여행자 보험",
+      ].join("\n"),
+      quoteHeader: { writtenAt: "2026-05-19", validUntil: "2026-05-19" },
+    });
+
+    expect(result.quote.items.map((item) => [item.category, item.description, item.unitPrice])).toEqual([
+      ["FLIGHT", "항공료", 457500],
+      ["VEHICLE", "지상비", 230000],
+      ["OTHER", "보험료", 10000],
+      ["OTHER", "1인당 예상수익", 52500],
+    ]);
+    expect(result.quote.summary.total).toBe(750000);
+  });
+
+  it("recovers local OCR grid amounts when labels include flight codes and land detail codes", () => {
+    const result = parseQuoteResponseText({
+      text: [
+        "총합계 750,000 원",
+        "환율기준 USD D",
+        "1인당 예상수익 52,500 (7%)",
+        "최종 입금가 750,000",
+        "항공 요금 457,500 원",
+        "요금 1",
+        "항공료 VJ 항공 104 1인당 457,500",
+        "TAX 0 합계 457,500",
+        "비고사항",
+        "3. 1인당 457,500원이 기본 요금입니다.",
+        "지상 요금 230,000 원",
+        "지상비 301,848 원",
+        "렌트수익 0 합계 230,000",
+        "비고사항",
+        "2. 1인당 230,000원이 기본 요금입니다.",
+        "공동 경비 요금 10,000 원",
+        "인솔자비",
+        "FOC 0 보료 10,000",
+        "기타 합계 10,000",
+        "**** 대략적인 공지 ****",
+        "1. 본 견적서는 1인당 여행비용입니다.",
+      ].join("\n"),
+      quoteHeader: { writtenAt: "2026-05-19", validUntil: "2026-05-19" },
+    });
+
+    expect(result.quote.items.map((item) => [item.category, item.description, item.unitPrice])).toEqual([
+      ["FLIGHT", "항공료", 457500],
+      ["VEHICLE", "지상비", 230000],
+      ["OTHER", "보험료", 10000],
+      ["OTHER", "1인당 예상수익", 52500],
+    ]);
+    expect(result.quote.summary.total).toBe(750000);
   });
 
   it("infers meal quantity from passenger text when no passenger count is provided", () => {
