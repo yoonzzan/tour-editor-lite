@@ -110,7 +110,7 @@ src/mocks/                      ← Mock 데이터 (항공·원가)
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **tour-editor** (3632 symbols, 6614 relationships, 272 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **tour-editor-lite** (3573 symbols, 7000 relationships, 292 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
@@ -133,10 +133,10 @@ This project is indexed by GitNexus as **tour-editor** (3632 symbols, 6614 relat
 
 | Resource | Use for |
 |----------|---------|
-| `gitnexus://repo/tour-editor/context` | Codebase overview, check index freshness |
-| `gitnexus://repo/tour-editor/clusters` | All functional areas |
-| `gitnexus://repo/tour-editor/processes` | All execution flows |
-| `gitnexus://repo/tour-editor/process/{name}` | Step-by-step execution trace |
+| `gitnexus://repo/tour-editor-lite/context` | Codebase overview, check index freshness |
+| `gitnexus://repo/tour-editor-lite/clusters` | All functional areas |
+| `gitnexus://repo/tour-editor-lite/processes` | All execution flows |
+| `gitnexus://repo/tour-editor-lite/process/{name}` | Step-by-step execution trace |
 
 ## CLI
 

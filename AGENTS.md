@@ -36,7 +36,7 @@
 - 견적답변 `1인당 예상수익`은 표시용 기본 행으로 유지하되 `agencyFee`, VAT, `groundProfit`에 중복 반영 금지
 - 견적답변 `환율기준`이 있으면 적용 외화 행이 남지 않아도 환율 영역을 유지하고, 환율 값이 채워진 상태에서는 stale 환율 경고 표시 금지
 - 견적답변 OCR은 `scripts/quote-response-ocr.py` 로컬 PaddleOCR 경로를 사용하며, 유료/외부 OCR API fallback 추가는 별도 승인 필요
-- 일정 직접입력: 파일 첨부 미리보기 형식(`<<상품 정보>>`, `<<상세 일정>>`, `*1일차*`, `- 이동 | ...`)은 일차/줄바꿈 구조를 보존해 deterministic structured parser로 분리 파싱한다
+- 일정 직접입력: 파일 첨부 미리보기 형식(`<<상품 정보>>`, `<<상세 일정>>`, `*1일차*`, `- 이동 | ...`)은 일차/줄바꿈 구조를 보존해 deterministic structured parser로 분리 파싱한다. `<<상세 일정>>`이 없어도 `상품 정보`, `항공/교통`, `숙박`, `포함/불포함`, `선택관광`, `쇼핑센터 방문 수`, `유의사항` 메타데이터는 유효하며, `기간`이 있으면 빈 일차를 생성한다.
 - 일정표 가져오기에서 견적산출/비용/원가표 성격 시트는 여행 일정으로 import하지 않는다
 
 ## 파일 경계 규칙
@@ -99,6 +99,50 @@ This project is indexed by GitNexus as **tour-editor** (3632 symbols, 6614 relat
 | `gitnexus://repo/tour-editor/clusters` | All functional areas |
 | `gitnexus://repo/tour-editor/processes` | All execution flows |
 | `gitnexus://repo/tour-editor/process/{name}` | Step-by-step execution trace |
+
+## CLI
+
+| Task | Read this skill file |
+|------|---------------------|
+| Understand architecture / "How does X work?" | `.claude/skills/gitnexus/gitnexus-exploring/SKILL.md` |
+| Blast radius / "What breaks if I change X?" | `.claude/skills/gitnexus/gitnexus-impact-analysis/SKILL.md` |
+| Trace bugs / "Why is X failing?" | `.claude/skills/gitnexus/gitnexus-debugging/SKILL.md` |
+| Rename / extract / split / refactor | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
+| Tools, resources, schema reference | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
+| Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
+
+<!-- gitnexus:end -->
+
+<!-- gitnexus:start -->
+# GitNexus — Code Intelligence
+
+This project is indexed by GitNexus as **tour-editor-lite** (3573 symbols, 7000 relationships, 292 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+
+> If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
+
+## Always Do
+
+- **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `gitnexus_impact({target: "symbolName", direction: "upstream"})` and report the blast radius (direct callers, affected processes, risk level) to the user.
+- **MUST run `gitnexus_detect_changes()` before committing** to verify your changes only affect expected symbols and execution flows.
+- **MUST warn the user** if impact analysis returns HIGH or CRITICAL risk before proceeding with edits.
+- When exploring unfamiliar code, use `gitnexus_query({query: "concept"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
+- When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `gitnexus_context({name: "symbolName"})`.
+
+## Never Do
+
+- NEVER edit a function, class, or method without first running `gitnexus_impact` on it.
+- NEVER ignore HIGH or CRITICAL risk warnings from impact analysis.
+- NEVER rename symbols with find-and-replace — use `gitnexus_rename` which understands the call graph.
+- NEVER commit changes without running `gitnexus_detect_changes()` to check affected scope.
+
+## Resources
+
+| Resource | Use for |
+|----------|---------|
+| `gitnexus://repo/tour-editor-lite/context` | Codebase overview, check index freshness |
+| `gitnexus://repo/tour-editor-lite/clusters` | All functional areas |
+| `gitnexus://repo/tour-editor-lite/processes` | All execution flows |
+| `gitnexus://repo/tour-editor-lite/process/{name}` | Step-by-step execution trace |
 
 ## CLI
 

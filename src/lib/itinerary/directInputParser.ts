@@ -25,6 +25,10 @@ interface ParsedMeal {
   text: string;
 }
 
+type ParsedSimpleEntry =
+  | { kind: "activity"; content: string }
+  | { kind: "meal"; meal: ParsedMeal };
+
 interface DayDraft {
   dayNo: number;
   date: string;
@@ -138,6 +142,17 @@ function parseDurationDays(value: string): number {
 
 function parsePassengerCounts(value: string): { adult: number; child: number; escort: number } {
   const text = cleanText(value);
+  const labeledAdult = /성인\s*(\d+)/u.exec(text)?.[1];
+  const labeledChild = /(?:아동|소아|어린이)\s*(\d+)/u.exec(text)?.[1];
+  const labeledEscort = /(?:인솔|가이드|TC)\s*(\d+)/iu.exec(text)?.[1];
+  if (labeledAdult || labeledChild || labeledEscort) {
+    return {
+      adult: labeledAdult ? Number(labeledAdult) : 0,
+      child: labeledChild ? Number(labeledChild) : 0,
+      escort: labeledEscort ? Number(labeledEscort) : 0,
+    };
+  }
+
   const plus = /(\d+)\s*(?:명)?\s*\+\s*(\d+)/u.exec(text);
   if (plus?.[1] && plus[2]) {
     const second = Number(plus[2]);
@@ -216,7 +231,7 @@ function stripPrice(value: string): string {
 }
 
 function sanitizeMealValue(value: string, slot: MealSlot): string {
-  const text = cleanText(stripPrice(value).replace(/^\s*\[+|\]+\s*$/gu, ""));
+  const text = cleanText(stripPrice(value).replace(/^\s*[\[(]+|[\])]+\s*$/gu, ""));
   if (!text || /^후(?:\s|$)/u.test(text)) return mealSlotLabel(slot);
   return text;
 }
@@ -270,14 +285,21 @@ function inferMealsFromList(value: string): ParsedMeal[] {
 }
 
 function scheduleItemType(content: string): ScheduleItemType {
+  const text = cleanText(content);
+  if (/^(?:오전|오후|전일)?\s*자유(?:일정)?(?:\([^)]+\))?$/u.test(text)) {
+    return "OTHER";
+  }
+  if (/^호텔\s*휴식$/u.test(text)) {
+    return "OTHER";
+  }
   if (/(호텔|숙박|투숙|체크\s*인|체크인|체크아웃|리조트|Hotel|HOTEL)/u.test(content)) {
     return "ACCOMMODATION";
   }
+  if (/(관광|방문|거리|공원|궁|성|섬|대학|유니버셜|서커스|마사지|온천|시장|전망대|박물관|호수|성당|바티칸|베니스|꼬모|사파리|지옥|유후인|다자이후|자금성|천단|이화원|고북수진|케이블카|바딘|롯데|사오비치|야시장|혼똔|키스브릿지|바구니배|오행산|바나산|크루즈|미케비치|손짜)/u.test(content)) {
+    return "SIGHTSEEING";
+  }
   if (/(공항|이동|도착|출발|버스|차량|샌딩|미팅|항공|탑승|하선)/u.test(content)) {
     return "TRANSFER";
-  }
-  if (/(관광|방문|거리|공원|궁|성|섬|대학|유니버셜|서커스|마사지|온천|시장|전망대|박물관|호수|성당|바티칸|베니스|꼬모|사파리|지옥|유후인|다자이후|자금성|천단|이화원|고북수진|케이블카|바딘|롯데|사오비치|야시장|혼똔|키스브릿지|바구니배)/u.test(content)) {
-    return "SIGHTSEEING";
   }
   return "OTHER";
 }
@@ -378,6 +400,13 @@ function splitActivityText(value: string): string[] {
     .filter(Boolean);
 }
 
+function splitHyphenScheduleText(value: string): string[] {
+  return value
+    .split(/\s*[-–]\s*/u)
+    .map(cleanText)
+    .filter(Boolean);
+}
+
 function extractBracketedMealBlocks(value: string): { body: string; meals: ParsedMeal[] } {
   const meals: ParsedMeal[] = [];
   const body = value.replace(/\[[^\]]+\]/gu, (block) => {
@@ -389,44 +418,62 @@ function extractBracketedMealBlocks(value: string): { body: string; meals: Parse
   return { body: cleanText(body), meals };
 }
 
-function parseSimpleBody(body: string): { activities: string[]; meals: ParsedMeal[] } {
-  const activities: string[] = [];
-  const meals: ParsedMeal[] = [];
+function appendActivityEntry(entries: ParsedSimpleEntry[], content: string): void {
+  const text = cleanText(content);
+  if (!text || isStandaloneMealMarker(text)) return;
+  entries.push({ kind: "activity", content: text });
+}
+
+function appendMealEntry(entries: ParsedSimpleEntry[], meal: ParsedMeal): void {
+  entries.push({ kind: "meal", meal });
+}
+
+function appendSimpleSegment(entries: ParsedSimpleEntry[], value: string): void {
+  const segment = cleanText(value);
+  if (!segment || isStandaloneMealMarker(segment)) return;
+
+  const postMealActivity = /^(조식|중식|석식|아침|점심|저녁)\s*후\s*(.+)$/u.exec(segment);
+  if (postMealActivity?.[1] && postMealActivity[2]) {
+    appendActivityEntry(entries, postMealActivity[2]);
+    return;
+  }
+
+  const parsedMeals = parseMealEntries(segment);
+  if (parsedMeals.length > 0) {
+    parsedMeals.forEach((meal) => appendMealEntry(entries, meal));
+    return;
+  }
+
+  appendActivityEntry(entries, segment);
+}
+
+function parseSimpleBody(body: string): ParsedSimpleEntry[] {
+  const entries: ParsedSimpleEntry[] = [];
   const extracted = extractBracketedMealBlocks(body);
-  meals.push(...extracted.meals);
-  if (!extracted.body) return { activities, meals };
+  if (!extracted.body) {
+    extracted.meals.forEach((meal) => appendMealEntry(entries, meal));
+    return entries;
+  }
 
   const slashParts = extracted.body.split(/\s*\/\s*/u).map(cleanText).filter(Boolean);
 
   if (slashParts.length === 2 && looksLikeMealList(slashParts[1] ?? "")) {
-    activities.push(...splitActivityText(slashParts[0] ?? ""));
-    meals.push(...inferMealsFromList(slashParts[1] ?? ""));
-    return { activities, meals };
+    splitActivityText(slashParts[0] ?? "").forEach((activity) => appendActivityEntry(entries, activity));
+    inferMealsFromList(slashParts[1] ?? "").forEach((meal) => appendMealEntry(entries, meal));
+    extracted.meals.forEach((meal) => appendMealEntry(entries, meal));
+    return entries;
   }
 
   const parts = slashParts.length > 0 ? slashParts : [body];
   for (const part of parts) {
-    const postMealActivity = /^(조식|중식|석식|아침|점심|저녁)\s*후\s+(.+)$/u.exec(part);
-    if (postMealActivity?.[1] && postMealActivity[2]) {
-      const slot = slotFromToken(postMealActivity[1]);
-      if (slot) meals.push({ slot, text: mealSlotLabel(slot) });
-      activities.push(cleanText(postMealActivity[2]));
-      continue;
-    }
-    const parsedMeals = parseMealEntries(part);
-    if (parsedMeals.length > 0) {
-      meals.push(...parsedMeals);
-      continue;
-    }
     if (isStandaloneMealMarker(part)) continue;
-    const hyphenParts = part.split(/\s+-\s+/u).map(cleanText).filter(Boolean);
-    const entries = hyphenParts.length > 1 ? hyphenParts : splitActivityText(part);
-    for (const entry of entries) {
-      if (!isStandaloneMealMarker(entry)) activities.push(entry);
-    }
+    const hyphenParts = splitHyphenScheduleText(part);
+    const segmentTexts = hyphenParts.length > 1 ? hyphenParts : splitActivityText(part);
+    segmentTexts.forEach((entry) => appendSimpleSegment(entries, entry));
   }
 
-  return { activities, meals };
+  extracted.meals.forEach((meal) => appendMealEntry(entries, meal));
+  return entries;
 }
 
 function parseDayLine(value: string): { dayNo: number; body: string } | null {
@@ -474,7 +521,7 @@ function parseTypedPreviewItem(value: string): ScheduleItem | null {
 
 function parseMetaLabel(value: string): { key: string; value: string } | null {
   const text = stripDecorativePrefix(value);
-  const match = /^(?:\d+\.\s*)?(견적코드|기준\s*코드|상품명|일정명|출발일|날짜|기간|인원|차량|호텔(?:\(RQ\))?|항공|포함|불포|불포함|불포함사항|비고|지상비|가이드|식사|입장지|기타포함)\s*[:：]\s*(.*)$/u.exec(text);
+  const match = /^(?:\d+\.\s*)?(견적코드|기준\s*코드|상품명|일정명|출발일|행사\s*일자?|날짜|기간|인원|차량|호텔(?:\(RQ\))?|항공|포함|불포|불포함|불포함사항|비고|쇼핑\s*&\s*옵션|쇼핑\s*옵션|쇼핑|옵션|지상비|가이드|식사|입장지|기타포함)\s*[:：]\s*(.*)$/u.exec(text);
   if (!match?.[1]) return null;
   return { key: match[1].replace(/\s+/gu, ""), value: cleanText(match[2] ?? "") };
 }
@@ -505,7 +552,7 @@ function applyMeta(state: DirectParseState, key: string, value: string): void {
     if (value) meta.groupName = value;
     return;
   }
-  if (key === "출발일" || key === "날짜" || key === "기간") {
+  if (key === "출발일" || key === "행사일" || key === "행사일자" || key === "날짜" || key === "기간") {
     const date = parseDateFromText(value);
     if (date && !meta.startDate) meta.startDate = date;
     const durationDays = parseDurationDays(value);
@@ -542,6 +589,14 @@ function applyMeta(state: DirectParseState, key: string, value: string): void {
     if (shopping?.[1]) meta.shoppingCenters = Number(shopping[1]);
     if (/노쇼핑/u.test(value)) meta.shoppingCenters = 0;
     appendUnique(meta.notes, value);
+    return;
+  }
+  if (key === "쇼핑&옵션" || key === "쇼핑옵션" || key === "쇼핑" || key === "옵션") {
+    if (/노옵션/u.test(value)) meta.optionalTour = "노옵션";
+    const shopping = /쇼핑\s*(\d+)\s*회/u.exec(value);
+    if (shopping?.[1]) meta.shoppingCenters = Number(shopping[1]);
+    if (/노쇼핑/u.test(value)) meta.shoppingCenters = 0;
+    appendUnique(meta.notes, `${key}: ${value}`);
     return;
   }
   if (key === "지상비") {
@@ -623,8 +678,13 @@ function parseDirectInput(rawText: string, title?: string): ItineraryData | null
     if (dayLine) {
       const draft = getDraftByDayNo(state, dayLine.dayNo);
       const parsed = parseSimpleBody(dayLine.body);
-      parsed.activities.forEach((activity) => addActivity(draft, activity));
-      parsed.meals.forEach((meal) => addMeal(draft, meal));
+      parsed.forEach((entry) => {
+        if (entry.kind === "activity") {
+          addActivity(draft, entry.content);
+          return;
+        }
+        addMeal(draft, entry.meal);
+      });
       state.scheduleLineCount += 1;
       continue;
     }
@@ -809,7 +869,7 @@ function readStructuredField(lines: string[], label: string): string {
 }
 
 function readStructuredFieldLines(lines: string[], label: string): string[] {
-  const labelPattern = new RegExp(`^\\*+\\s*${label}\\s*\\*+$`, "u");
+  const labelPattern = structuredLabelPattern(label);
   const startIndex = lines.findIndex((line) => labelPattern.test(line));
   if (startIndex < 0) return [];
   const values: string[] = [];
@@ -820,6 +880,31 @@ function readStructuredFieldLines(lines: string[], label: string): string[] {
     values.push(stripDecorativePrefix(line));
   }
   return values.map(cleanText).filter(Boolean);
+}
+
+function structuredLabelPattern(label: string): RegExp {
+  const aliases: Record<string, string[]> = {
+    상품명: ["상품명", "상품 이름", "일정명", "행사명"],
+    방문도시: ["방문도시", "방문 도시", "여행도시", "여행 도시", "지역"],
+    기간: ["기간", "여행기간", "여행 기간", "행사기간", "행사 기간"],
+    "성인1인 총 상품가": ["성인1인 총 상품가", "성인 1인 총 상품가", "성인1인상품가", "성인 상품가"],
+    "항공 출발": ["항공 출발", "항공출발", "출국편", "출발편"],
+    "항공 귀국": ["항공 귀국", "항공귀국", "항공 도착", "항공도착", "귀국편", "리턴편", "도착편"],
+    차량: ["차량", "현지차량", "현지 차량"],
+    숙박호텔: ["숙박호텔", "숙박 호텔", "호텔", "호텔명"],
+    호텔등급: ["호텔등급", "호텔 등급", "등급"],
+    "1객실이용인원": ["1객실이용인원", "1객실 이용인원", "객실이용인원", "객실 이용인원"],
+    포함사항: ["포함사항", "포함 사항", "포함내역", "포함 내역", "포함"],
+    불포함사항: ["불포함사항", "불포함 사항", "불포함내역", "불포함 내역", "불포함", "불포"],
+    선택관광: ["선택관광", "선택 관광", "옵션투어", "옵션 투어"],
+    "쇼핑센터 방문 수": ["쇼핑센터 방문 수", "쇼핑센터 방문수", "쇼핑센터 수", "쇼핑 센터 수", "쇼핑횟수", "쇼핑 횟수"],
+    유의사항: ["유의사항", "유의 사항", "주의사항", "주의 사항", "비고", "참고사항", "참고 사항"],
+  };
+  const labels = aliases[label] ?? [label];
+  const source = labels
+    .map((entry) => entry.replace(/\s+/gu, "\\s*"))
+    .join("|");
+  return new RegExp(`^\\*+\\s*(?:${source})\\s*\\*+$`, "u");
 }
 
 function structuredTravelPeriod(lines: string[], days: DaySchedule[]): ItineraryData["overview"]["travelPeriod"] | null {
