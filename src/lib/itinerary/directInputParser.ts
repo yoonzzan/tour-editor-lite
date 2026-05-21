@@ -793,9 +793,7 @@ function looksLikeSpreadsheetDirectInput(rawText: string): boolean {
 }
 
 function looksLikeStructuredPreviewInput(rawText: string): boolean {
-  return /(?:^|\n)\s*<<\s*상품\s*정보\s*>>/u.test(rawText) &&
-    /(?:^|\n)\s*<<\s*상세\s*일정\s*>>/u.test(rawText) &&
-    /(?:^|\n)\s*-\s*(?:이동|관광|식사|숙박|기타)\s*\|/u.test(rawText);
+  return /(?:^|\n)\s*<<\s*상품\s*정보\s*>>/u.test(rawText);
 }
 
 function structuredPreviewLines(rawText: string): string[] {
@@ -807,9 +805,13 @@ function structuredPreviewLines(rawText: string): string[] {
 }
 
 function readStructuredField(lines: string[], label: string): string {
+  return readStructuredFieldLines(lines, label).join(", ");
+}
+
+function readStructuredFieldLines(lines: string[], label: string): string[] {
   const labelPattern = new RegExp(`^\\*+\\s*${label}\\s*\\*+$`, "u");
   const startIndex = lines.findIndex((line) => labelPattern.test(line));
-  if (startIndex < 0) return "";
+  if (startIndex < 0) return [];
   const values: string[] = [];
   for (let index = startIndex + 1; index < lines.length; index += 1) {
     const line = lines[index] ?? "";
@@ -817,51 +819,79 @@ function readStructuredField(lines: string[], label: string): string {
     if (parseStarDayMarker(line)) break;
     values.push(stripDecorativePrefix(line));
   }
-  return values.map(cleanText).filter(Boolean).join(", ");
+  return values.map(cleanText).filter(Boolean);
+}
+
+function structuredTravelPeriod(lines: string[], days: DaySchedule[]): ItineraryData["overview"]["travelPeriod"] | null {
+  const period = readStructuredField(lines, "기간");
+  const rangeMatch = /(20\d{2}[./-]\d{1,2}[./-]\d{1,2})\s*(?:~|-|부터)\s*(20\d{2}[./-]\d{1,2}[./-]\d{1,2})/u.exec(period);
+  const start = rangeMatch?.[1] ? parseDateFromText(rangeMatch[1]) : days[0]?.date || "";
+  const end = rangeMatch?.[2] ? parseDateFromText(rangeMatch[2]) : days[days.length - 1]?.date || start;
+  if (!start || !end) return null;
+  return { start, end };
+}
+
+function buildEmptyStructuredDays(period: ItineraryData["overview"]["travelPeriod"]): DaySchedule[] {
+  const [startYear, startMonth, startDay] = period.start.split("-").map(Number);
+  const [endYear, endMonth, endDay] = period.end.split("-").map(Number);
+  if (!startYear || !startMonth || !startDay || !endYear || !endMonth || !endDay) return [];
+
+  const startDate = new Date(Date.UTC(startYear, startMonth - 1, startDay));
+  const endDate = new Date(Date.UTC(endYear, endMonth - 1, endDay));
+  const diffDays = Math.round((endDate.getTime() - startDate.getTime()) / (24 * 60 * 60 * 1000));
+  if (!Number.isFinite(diffDays) || diffDays < 0) return [];
+
+  return Array.from({ length: diffDays + 1 }, (_, index) => ({
+    dayNo: index + 1,
+    date: addDays(period.start, index),
+    items: [],
+  }));
 }
 
 function parseStructuredPreviewInput(rawText: string, title?: string): ItineraryData | null {
   const lines = structuredPreviewLines(rawText);
   const detailIndex = lines.findIndex((line) => /^<<\s*상세\s*일정\s*>>$/u.test(line));
-  if (detailIndex < 0) return null;
 
   const days: DaySchedule[] = [];
   let currentDay: DaySchedule | null = null;
   let pendingDate = "";
 
-  for (let index = detailIndex + 1; index < lines.length; index += 1) {
-    const line = lines[index] ?? "";
-    const dayNo = parseStarDayMarker(line);
-    if (dayNo) {
-      if (currentDay) days.push(currentDay);
-      currentDay = { dayNo, date: "", items: [] };
-      pendingDate = "";
-      continue;
-    }
+  if (detailIndex >= 0) {
+    for (let index = detailIndex + 1; index < lines.length; index += 1) {
+      const line = lines[index] ?? "";
+      const dayNo = parseStarDayMarker(line);
+      if (dayNo) {
+        if (currentDay) days.push(currentDay);
+        currentDay = { dayNo, date: "", items: [] };
+        pendingDate = "";
+        continue;
+      }
 
-    if (!currentDay) continue;
-    const date = parseDateFromText(line);
-    if (date && !pendingDate && /^20\d{2}-\d{2}-\d{2}$/u.test(date)) {
-      pendingDate = date;
-      currentDay.date = date;
-      continue;
-    }
+      if (!currentDay) continue;
+      const date = parseDateFromText(line);
+      if (date && !pendingDate && /^20\d{2}-\d{2}-\d{2}$/u.test(date)) {
+        pendingDate = date;
+        currentDay.date = date;
+        continue;
+      }
 
-    const item = parseTypedPreviewItem(line);
-    if (item) currentDay.items.push(item);
+      const item = parseTypedPreviewItem(line);
+      if (item) currentDay.items.push(item);
+    }
+    if (currentDay) days.push(currentDay);
   }
-  if (currentDay) days.push(currentDay);
-  if (days.length === 0) return null;
 
-  const period = readStructuredField(lines, "기간");
-  const rangeMatch = /(20\d{2}[./-]\d{1,2}[./-]\d{1,2})\s*(?:~|-|부터)\s*(20\d{2}[./-]\d{1,2}[./-]\d{1,2})/u.exec(period);
-  const start = rangeMatch?.[1] ? parseDateFromText(rangeMatch[1]) : days[0]?.date || TODAY;
-  const end = rangeMatch?.[2] ? parseDateFromText(rangeMatch[2]) : days[days.length - 1]?.date || start;
+  const period = structuredTravelPeriod(lines, days);
+  if (!period) return null;
+  const parsedDays = days.length > 0 ? days : buildEmptyStructuredDays(period);
+  if (parsedDays.length === 0) return null;
+
   const groupName = readStructuredField(lines, "상품명") || title || "직접입력 일정";
   const city = readStructuredField(lines, "방문도시").replace(/^-\s*/u, "");
   const fareAdult = parseKrwAmount(readStructuredField(lines, "성인1인 총 상품가"));
   const shoppingRaw = readStructuredField(lines, "쇼핑센터 방문 수");
   const shopping = /(\d+)/u.exec(shoppingRaw)?.[1];
+  const notes = readStructuredFieldLines(lines, "유의사항").join("\n");
 
   const result: ItineraryData = {
     header: {
@@ -871,7 +901,7 @@ function parseStructuredPreviewInput(rawText: string, title?: string): Itinerary
     overview: {
       recipient: "",
       cities: city,
-      travelPeriod: { start, end },
+      travelPeriod: period,
       passengers: {
         adult: 0,
         child: 0,
@@ -900,13 +930,13 @@ function parseStructuredPreviewInput(rawText: string, title?: string): Itinerary
       },
       included: readStructuredField(lines, "포함사항"),
       excluded: readStructuredField(lines, "불포함사항"),
-      optionalTour: "",
+      optionalTour: readStructuredField(lines, "선택관광"),
       shoppingCenters: shopping ? Number(shopping) : 0,
-      notes: "",
+      notes,
     },
-    days: days.map((day, index) => ({
+    days: parsedDays.map((day, index) => ({
       ...day,
-      date: day.date || addDays(start, index),
+      date: day.date || addDays(period.start, index),
     })),
   };
 

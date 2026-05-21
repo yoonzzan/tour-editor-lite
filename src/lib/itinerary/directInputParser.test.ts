@@ -262,6 +262,90 @@ describe("direct input itinerary parser", () => {
     expect(activityContents).not.toContain("]");
   });
 
+  it("loads structured direct-input metadata without a detailed itinerary", async () => {
+    const rawText = `<<상품 정보>>
+*상품명*
+직접입력 일정
+
+*방문도시*
+- 오사카
+
+*기간*
+2026-05-21 ~ 2026-05-24
+
+*성인1인 총 상품가*
+500,000원
+
+
+<<항공/교통>>
+*항공 출발*
+인천공항
+
+*항공 귀국*
+간사이공항
+
+*차량*
+전용버스
+
+
+<<숙박>>
+*숙박호텔*
+- 오사카 호텔 또는 동급
+
+*호텔등급*
+4성급
+
+*1객실이용인원*
+2인실
+
+
+<<포함/불포함>>
+*포함사항*
+- 호텔숙박비
+
+*불포함사항*
+- 개인경비
+
+*선택관광*
+- 노옵션
+
+*쇼핑센터 방문 수*
+0
+
+
+*유의사항*
+- ■지상비: $440/인 （18+1명: $465/인)
+- ■노쇼핑
+- ■노옵션`;
+
+    const { itinerary } = await parseDirectInputItineraryWithDiagnostics({ rawText, title: "직접입력 일정" });
+
+    expect(itinerary.header.groupName).toBe("직접입력 일정");
+    expect(itinerary.overview.cities).toBe("오사카");
+    expect(itinerary.overview.travelPeriod).toEqual({ start: "2026-05-21", end: "2026-05-24" });
+    expect(itinerary.overview.fare.adultPerPerson).toBe(500000);
+    expect(itinerary.basics.flight.departure).toBe("인천공항");
+    expect(itinerary.basics.flight.arrival).toBe("간사이공항");
+    expect(itinerary.basics.flight.localVehicle).toBe("전용버스");
+    expect(itinerary.basics.accommodation.hotel).toBe("오사카 호텔 또는 동급");
+    expect(itinerary.basics.accommodation.grade).toBe("4성급");
+    expect(itinerary.basics.accommodation.occupancy).toBe("2인실");
+    expect(itinerary.basics.included).toBe("호텔숙박비");
+    expect(itinerary.basics.excluded).toBe("개인경비");
+    expect(itinerary.basics.optionalTour).toBe("노옵션");
+    expect(itinerary.basics.shoppingCenters).toBe(0);
+    expect(itinerary.basics.notes).toContain("지상비");
+    expect(itinerary.basics.notes).toContain("노쇼핑");
+    expect(itinerary.basics.notes).toContain("노옵션");
+    expect(itinerary.days.map((day) => day.date)).toEqual([
+      "2026-05-21",
+      "2026-05-22",
+      "2026-05-23",
+      "2026-05-24",
+    ]);
+    expect(itinerary.days.every((day) => day.items.length === 0)).toBe(true);
+  });
+
   it("routes structured file-attachment preview text without collapsing it into one day", async () => {
     const rawText = `<<상품 정보>>
 *상품명*
