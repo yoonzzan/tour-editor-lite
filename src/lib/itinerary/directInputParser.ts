@@ -230,8 +230,17 @@ function stripPrice(value: string): string {
   );
 }
 
+function stripWrappingBrackets(value: string): string {
+  const text = cleanText(value);
+  const square = /^\[(.+)\]$/u.exec(text);
+  if (square?.[1]) return cleanText(square[1]);
+  const paren = /^\((.+)\)$/u.exec(text);
+  if (paren?.[1]) return cleanText(paren[1]);
+  return text;
+}
+
 function sanitizeMealValue(value: string, slot: MealSlot): string {
-  const text = cleanText(stripPrice(value).replace(/^\s*[\[(]+|[\])]+\s*$/gu, ""));
+  const text = stripWrappingBrackets(stripPrice(value));
   if (!text || /^후(?:\s|$)/u.test(text)) return mealSlotLabel(slot);
   return text;
 }
@@ -263,10 +272,31 @@ function looksLikeMealList(value: string): boolean {
   const text = cleanText(value);
   if (!text) return false;
   if (parseMealEntries(text).length > 0) return true;
-  if (/(정식|식$|뷔페|삼겹살|씨푸드|불고기|분짜|순두부|한식|현지식|호텔식|자유식|기내식|오리구이|샤브샤브|망고빙수)/u.test(text)) {
+  if (/(정식|식$|뷔페|삼겹살|씨푸드|불고기|분짜|순두부|한식|현지식|호텔식|자유식|기내식|오리구이|샤브샤브|망고빙수|비빔밥|된장찌개|김치전골|몽골식)/u.test(text)) {
     return !/(이동|관광|방문|공항|호텔\s*이동|휴식|투어|탑승|체크|거리|호수|성당|전망대|시장)/u.test(text);
   }
   return false;
+}
+
+function parseMealSummaryBody(value: string): ParsedMeal[] {
+  const labeledMeals = parseMealEntries(value);
+  if (labeledMeals.length > 0) return labeledMeals;
+
+  const parts = cleanText(value)
+    .split(/\s*\/\s*/u)
+    .map((part) => sanitizeMealValue(part, "lunch"))
+    .filter(Boolean);
+  if (parts.length === 0) return [];
+  if (parts.length > 3) return [];
+  if (parts.some((part) => !looksLikeMealList(part) && !/^불포함$/u.test(part))) return [];
+
+  if (parts.length === 1) return [{ slot: "lunch", text: parts[0] ?? mealSlotLabel("lunch") }];
+  return parts.map((text, index, source) => {
+    const slot: MealSlot = source.length >= 3
+      ? index === 0 ? "breakfast" : index === 1 ? "lunch" : "dinner"
+      : index === 0 ? "lunch" : "dinner";
+    return { slot, text };
+  });
 }
 
 function inferMealsFromList(value: string): ParsedMeal[] {
@@ -295,7 +325,7 @@ function scheduleItemType(content: string): ScheduleItemType {
   if (/(호텔|숙박|투숙|체크\s*인|체크인|체크아웃|리조트|Hotel|HOTEL)/u.test(content)) {
     return "ACCOMMODATION";
   }
-  if (/(관광|방문|거리|공원|궁|성|섬|대학|유니버셜|서커스|마사지|온천|시장|전망대|박물관|호수|성당|바티칸|베니스|꼬모|사파리|지옥|유후인|다자이후|자금성|천단|이화원|고북수진|케이블카|바딘|롯데|사오비치|야시장|혼똔|키스브릿지|바구니배|오행산|바나산|크루즈|미케비치|손짜)/u.test(content)) {
+  if (/(관광|방문|거리|공원|궁|성|섬|대학|유니버셜|서커스|마사지|온천|시장|전망대|박물관|호수|성당|바티칸|베니스|꼬모|사파리|지옥|유후인|다자이후|자금성|천단|이화원|고북수진|케이블카|바딘|롯데|사오비치|야시장|혼똔|키스브릿지|바구니배|오행산|바나산|크루즈|미케비치|손짜|낙타|오프로드|바이크|맨발걷기|일몰|별빛|캠프파이어|꼬마열차|썰매|승마|광장|징기스칸릉|체험|감상|관람)/u.test(content)) {
     return "SIGHTSEEING";
   }
   if (/(공항|이동|도착|출발|버스|차량|샌딩|미팅|항공|탑승|하선)/u.test(content)) {
@@ -578,6 +608,28 @@ function looksLikeHotelContinuation(value: string): boolean {
   return /(호텔|Hotel|HOTEL|동급|RQ|일차|로마|피렌체|파도바|밀라노|하얏트|노보텔|베스트웨스턴|스기노이|몬토레)/u.test(text);
 }
 
+function looksLikeLodgingSummary(value: string): boolean {
+  const text = stripDecorativePrefix(value);
+  if (!text) return false;
+  if (parseDayLine(text) || parseMetaLabel(text) || parseLeadingMonthDayLine(text)) return false;
+  return /(호텔|Hotel|HOTEL|동급|리조트|숙소|게르)/u.test(text);
+}
+
+function looksLikeDirectNoteLine(value: string): boolean {
+  return /(방문정책|방문비용|입장료|책정|불포함|기준|조건|RQ|변동|확인|요금|비용|지상|노팁|노옵션|노쇼핑|싱차|옵션가능|팁포함)/u.test(value);
+}
+
+function parseParenthesizedKrwAmount(value: string): number {
+  const match = /\(([\d,]{4,})\)/u.exec(value);
+  if (!match?.[1]) return 0;
+  const amount = Number(match[1].replace(/,/gu, ""));
+  return Number.isFinite(amount) ? amount : 0;
+}
+
+function looksLikeUnlabeledHeadcountFare(value: string): boolean {
+  return /^\d+\s*\+\s*\d+\s*=\s*[\d,.]+\s*(?:불|달러|USD|\$)?(?:\s*\([\d,]+\))?$/iu.test(stripDecorativePrefix(value));
+}
+
 function applyMeta(state: DirectParseState, key: string, value: string): void {
   const meta = state.meta;
   if (key === "상품명" || key === "일정명") {
@@ -659,6 +711,7 @@ function parseDirectInput(rawText: string, title?: string): ItineraryData | null
   };
   let section: DirectSection = null;
   let collectingHotel = false;
+  let currentScheduleDraft: DayDraft | null = null;
 
   for (const rawLine of lines) {
     const line = cleanText(rawLine);
@@ -668,6 +721,7 @@ function parseDirectInput(rawText: string, title?: string): ItineraryData | null
     if (nextSection) {
       section = nextSection;
       collectingHotel = false;
+      currentScheduleDraft = null;
       continue;
     }
 
@@ -684,12 +738,25 @@ function parseDirectInput(rawText: string, title?: string): ItineraryData | null
       applyMeta(state, meta.key, meta.value);
       collectingHotel = meta.key.startsWith("호텔");
       section = meta.key === "불포함사항" || meta.key === "불포함" || meta.key === "불포" ? "excluded" : null;
+      currentScheduleDraft = null;
+      continue;
+    }
+
+    const text = stripDecorativePrefix(line);
+
+    if (looksLikeUnlabeledHeadcountFare(text)) {
+      const amount = parseParenthesizedKrwAmount(text);
+      if (amount > 0) state.meta.fareAdult = amount;
+      appendUnique(state.meta.notes, text);
+      state.noiseRemovedCount += 1;
+      currentScheduleDraft = null;
       continue;
     }
 
     const passengerLine = /^(\d+)\s*명\s*단독$/u.exec(stripDecorativePrefix(line));
     if (passengerLine?.[1]) {
       state.meta.adult = Number(passengerLine[1]);
+      currentScheduleDraft = null;
       continue;
     }
 
@@ -699,8 +766,10 @@ function parseDirectInput(rawText: string, title?: string): ItineraryData | null
       const meals = parseMealEntries(dateLine.body);
       if (section === "meal" || meals.length > 0) {
         meals.forEach((meal) => addMeal(draft, meal));
+        currentScheduleDraft = null;
       } else {
         splitActivityText(dateLine.body).forEach((activity) => addActivity(draft, activity));
+        currentScheduleDraft = draft;
       }
       state.scheduleLineCount += 1;
       continue;
@@ -708,8 +777,14 @@ function parseDirectInput(rawText: string, title?: string): ItineraryData | null
 
     const dayLine = parseDayLine(line);
     if (dayLine) {
+      const existingDraft = state.byDayNo.get(dayLine.dayNo);
       const draft = getDraftByDayNo(state, dayLine.dayNo);
-      const parsed = parseSimpleBody(dayLine.body);
+      const mealSummary = existingDraft && existingDraft.items.length > 0
+        ? parseMealSummaryBody(dayLine.body)
+        : [];
+      const parsed = mealSummary.length > 0
+        ? mealSummary.map((meal): ParsedSimpleEntry => ({ kind: "meal", meal }))
+        : parseSimpleBody(dayLine.body);
       parsed.forEach((entry) => {
         if (entry.kind === "activity") {
           addActivity(draft, entry.content);
@@ -718,6 +793,7 @@ function parseDirectInput(rawText: string, title?: string): ItineraryData | null
         addMeal(draft, entry.meal);
       });
       state.scheduleLineCount += 1;
+      currentScheduleDraft = mealSummary.length > 0 ? null : draft;
       continue;
     }
 
@@ -730,17 +806,24 @@ function parseDirectInput(rawText: string, title?: string): ItineraryData | null
           : state.drafts[state.drafts.length - 1];
         if (draft) meals.forEach((meal) => addMeal(draft, meal));
         state.scheduleLineCount += 1;
+        currentScheduleDraft = null;
         continue;
       }
     }
 
-    const text = stripDecorativePrefix(line);
     if (/^(?:35인승|45인승|대형버스|중형|소형|하이에스)/u.test(text)) {
       state.meta.vehicle = text;
+      currentScheduleDraft = null;
+      continue;
+    }
+    if (state.drafts.length === 0 && looksLikeLodgingSummary(text)) {
+      appendUnique(state.meta.hotelLines, text);
+      currentScheduleDraft = null;
       continue;
     }
     if (/^[^\s]+\s*호텔$/u.test(text) || /호텔$/u.test(text) && state.drafts.length === 0) {
       appendUnique(state.meta.hotelLines, text);
+      currentScheduleDraft = null;
       continue;
     }
     if (/노옵션/u.test(text) && !state.meta.optionalTour) state.meta.optionalTour = "노옵션";
@@ -752,12 +835,21 @@ function parseDirectInput(rawText: string, title?: string): ItineraryData | null
       appendUnique(state.meta.excludedLines, text);
       appendUnique(state.meta.notes, text);
       state.noiseRemovedCount += 1;
+      currentScheduleDraft = null;
       continue;
     }
 
-    if (/(방문정책|방문비용|입장료|책정|불포함|기준|조건|RQ|변동|확인|요금|비용|지상|노팁|노옵션|노쇼핑|싱차)/u.test(text)) {
+    if (looksLikeDirectNoteLine(text)) {
       appendUnique(state.meta.notes, text);
       state.noiseRemovedCount += 1;
+      currentScheduleDraft = null;
+      continue;
+    }
+
+    if (currentScheduleDraft) {
+      const draft = currentScheduleDraft;
+      splitActivityText(text).forEach((activity) => addActivity(draft, activity));
+      state.scheduleLineCount += 1;
     }
   }
 

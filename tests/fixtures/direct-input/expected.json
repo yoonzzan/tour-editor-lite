@@ -88,5 +88,65 @@
         "TRANSFER:다낭이동"
       ]
     }
+  },
+  {
+    "name": "ordos-multiline-meals",
+    "file": "ordos-multiline-meals.txt",
+    "period": {
+      "start": "2026-05-21",
+      "end": "2026-05-24"
+    },
+    "passengers": {
+      "adult": 0,
+      "child": 0
+    },
+    "vehicle": "",
+    "shoppingCenters": 0,
+    "optionalTour": "",
+    "fareAdult": 540000,
+    "hotelIncludes": [
+      "메이웨 혹 보위안호성호텔",
+      "사막유리호텔",
+      "현대식게르"
+    ],
+    "notesIncludes": [
+      "20+1=360불(540000)",
+      "노쇼핑. 팁포함. 옵션가능"
+    ],
+    "days": {
+      "1": [
+        "MEAL:lunch:불포함",
+        "ACCOMMODATION:오르도스공항 도착 후 호텔로 이동 및 호텔투숙"
+      ],
+      "2": [
+        "TRANSFER:인컨타라사막으로 이동",
+        "SIGHTSEEING:낙타타기",
+        "SIGHTSEEING:오프로드 바이크 체험",
+        "SIGHTSEEING:사막맨발걷기",
+        "SIGHTSEEING:사막일몰감상",
+        "SIGHTSEEING:별빛감상",
+        "SIGHTSEEING:캠프파이어(우천시불가)",
+        "MEAL:lunch:비빔밥+된장찌개",
+        "MEAL:dinner:삼겹살 무제한"
+      ],
+      "3": [
+        "TRANSFER:오르도스초원으로 이동",
+        "SIGHTSEEING:오르도스초원 관광",
+        "SIGHTSEEING:꼬마열차",
+        "SIGHTSEEING:초원썰매 탑승",
+        "SIGHTSEEING:서커스 관람",
+        "SIGHTSEEING:승마체험",
+        "MEAL:lunch:김치전골",
+        "MEAL:dinner:몽골식(수바루)"
+      ],
+      "4": [
+        "TRANSFER:오르도스시내로 이동",
+        "SIGHTSEEING:오르도스박물관",
+        "SIGHTSEEING:캉바스광장",
+        "SIGHTSEEING:징기스칸릉 관광",
+        "TRANSFER:오르도스공항으로 이동",
+        "MEAL:lunch:샤브샤브"
+      ]
+    }
   }
 ]
