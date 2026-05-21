@@ -261,4 +261,125 @@ describe("direct input itinerary parser", () => {
     expect(activityContents).not.toContain("[중:");
     expect(activityContents).not.toContain("]");
   });
+
+  it("routes structured file-attachment preview text without collapsing it into one day", async () => {
+    const rawText = `<<상품 정보>>
+*상품명*
+도쿄4일-노원구의회
+
+*방문도시*
+- 도쿄
+
+*기간*
+2026-10-17 ~ 2026-10-20
+
+*성인1인 총 상품가*
+113,500원
+
+
+<<항공/교통>>
+*항공 출발*
+인천공항
+
+*항공 귀국*
+나리타공항
+
+*차량*
+전용버스
+
+
+<<숙박>>
+*숙박호텔*
+- 메트로 폴리탄 이케부트로 호텔 또는 동급
+
+*호텔등급*
+4성급
+
+*1객실이용인원*
+2인실
+
+
+<<포함/불포함>>
+*포함사항*
+- 호텔숙박비 (2인1실 기준), 식사 중식 3,000엔*4회, 석식 5,000엔*3회, 스루가이드 기준 (가이드 기사팁 포함), 생수 포함, 왕복항공료 유류택스, 1억원여행자 보험, 노쇼핑기준
+
+*불포함사항*
+- 기타 개인경비
+
+*쇼핑센터 방문 수*
+0
+
+
+<<상세 일정>>
+*1일차*
+2026-10-17
+- 이동 | 인천 공항에서 가이드 미팅 & 입국 수속
+- 이동 | 인천공항 출발
+- 이동 | 나리타 공항 도착 후 전용차량 탑승
+- 식사 | 중식: 현지식
+- 이동 | 아사쿠사로 이동
+- 기타 | *아사쿠사 센소지 및 나카미세 도오리
+- 식사 | 석식: 현지식
+- 이동 | 호텔이동
+- 기타 | 시간=4성급 | 호텔 - 메트로 폴리탄 이케부트로 호텔 또는 동급 (2인실 기준)
+
+*2일차*
+2026-10-18
+- 이동 | 호텔 전용차량 탑승
+- 식사 | 조식: 호텔식
+- 기타 | *일본의 상징이자 명실상부한 일본의 최고봉인 후지산 오합목
+- 기타 | *수많은 온천과 자연경관으로 아름다운 국립공원 하코네 국립공원
+- 식사 | 중식: 현지식
+- 기타 | *아시 호수의 해적 유람선을 타자 ! 아시호수 유람선( 桃源台港発>箱根町港着)
+- 기타 | 도쿄로 귀환
+- 식사 | 석식: 현지식
+- 이동 | 호텔이동
+
+*3일차*
+2026-10-19
+- 식사 | 조식: 호텔식
+- 기타 | * 요코하마 아카렝가 , 미나토 미라이21, 야마시타공원 , 차이나 타원
+- 기타 | ㅁ 공식 방문지 -예정 자체 수배 시내 예정
+- 식사 | 석식: 현지식
+- 이동 | 호텔이동
+
+*4일차*
+2026-10-20
+- 식사 | 조식: 호텔식
+- 기타 | ㅁ 공식 방문지 -예정 자체 수배 시내 예정
+- 기타 | *오다이바 다이바시티, 자유여신상, 레인보우 브릿지 조망
+- 식사 | 중식: 현지식
+- 이동 | 나리타공항 이동
+- 이동 | 나리타공항 출발
+- 이동 | 인천공항 도착 후 해산`;
+
+    const { itinerary, diagnostics } = await parseDirectInputItineraryWithDiagnostics({
+      rawText,
+      title: "직접입력 일정",
+    });
+    const allContents = contents(itinerary).join("\n");
+
+    expect(diagnostics.source).toBe("fast-text");
+    expect(itinerary.header.groupName).toBe("도쿄4일-노원구의회");
+    expect(itinerary.overview.cities).toBe("도쿄");
+    expect(itinerary.overview.travelPeriod).toEqual({ start: "2026-10-17", end: "2026-10-20" });
+    expect(itinerary.overview.fare.adultPerPerson).toBe(113500);
+    expect(itinerary.basics.flight.departure).toBe("인천공항");
+    expect(itinerary.basics.flight.arrival).toBe("나리타공항");
+    expect(itinerary.basics.flight.localVehicle).toBe("전용버스");
+    expect(itinerary.basics.accommodation.hotel).toContain("메트로 폴리탄 이케부트로 호텔");
+    expect(itinerary.days.map((day) => day.date)).toEqual([
+      "2026-10-17",
+      "2026-10-18",
+      "2026-10-19",
+      "2026-10-20",
+    ]);
+    expect(itinerary.days).toHaveLength(4);
+    expect(meal(itinerary, 1, "lunch")).toBe("현지식");
+    expect(meal(itinerary, 4, "lunch")).toBe("현지식");
+    expect(allContents).toContain("아사쿠사 센소지 및 나카미세 도오리");
+    expect(allContents).toContain("나리타공항 출발");
+    expect(allContents).not.toContain("<<상품 정보>>");
+    expect(allContents).not.toContain("왕복항공료 유류택스");
+  });
 });

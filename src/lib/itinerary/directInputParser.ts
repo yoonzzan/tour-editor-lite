@@ -309,6 +309,15 @@ function buildMealItem(slot: MealSlot, text: string): ScheduleItem {
   };
 }
 
+function mapTypedItemType(value: string, content: string): ScheduleItemType {
+  const label = cleanText(value);
+  if (label === "이동") return "TRANSFER";
+  if (label === "식사") return "MEAL";
+  if (label === "숙박") return "ACCOMMODATION";
+  if (label === "관광") return "SIGHTSEEING";
+  return scheduleItemType(content);
+}
+
 function createDraft(dayNo: number, date: string): DayDraft {
   return {
     dayNo,
@@ -430,6 +439,37 @@ function parseDayLine(value: string): { dayNo: number; body: string } | null {
   const dayNo = Number(dayNoText);
   if (!Number.isFinite(dayNo) || dayNo <= 0) return null;
   return { dayNo, body: cleanText(body) };
+}
+
+function parseStarDayMarker(value: string): number | undefined {
+  const match = /^\s*\*+\s*(\d{1,2})\s*일차\s*\*+\s*$/u.exec(value);
+  if (!match?.[1]) return undefined;
+  const dayNo = Number(match[1]);
+  return Number.isFinite(dayNo) && dayNo > 0 ? dayNo : undefined;
+}
+
+function parseTypedPreviewItem(value: string): ScheduleItem | null {
+  const match = /^\s*-\s*(이동|관광|식사|숙박|기타)\s*\|\s*(.+)$/u.exec(value);
+  if (!match?.[1] || !match[2]) return null;
+  const segments = match[2].split(/\s*\|\s*/u).map(cleanText).filter(Boolean);
+  const content = cleanText(segments.filter((segment) => !/^(?:지역|교통편|시간)\s*=/u.test(segment)).join(" | "))
+    .replace(/^\*\s*/u, "");
+  if (!content) return null;
+
+  if (match[1] === "식사") {
+    const meal = parseMealEntries(content)[0];
+    if (meal) return buildMealItem(meal.slot, meal.text);
+  }
+
+  const type = mapTypedItemType(match[1], content);
+  return {
+    id: randomUUID(),
+    type,
+    content,
+    time: "",
+    region: "",
+    ...(type === "ACCOMMODATION" ? { hotel: content } : {}),
+  };
 }
 
 function parseMetaLabel(value: string): { key: string; value: string } | null {
@@ -752,6 +792,127 @@ function looksLikeSpreadsheetDirectInput(rawText: string): boolean {
   return /(?:일자|날짜|지역|교통편|시간|일\s*정|식\s*사|제\s*\d{1,2}\s*일)/u.test(sample);
 }
 
+function looksLikeStructuredPreviewInput(rawText: string): boolean {
+  return /(?:^|\n)\s*<<\s*상품\s*정보\s*>>/u.test(rawText) &&
+    /(?:^|\n)\s*<<\s*상세\s*일정\s*>>/u.test(rawText) &&
+    /(?:^|\n)\s*-\s*(?:이동|관광|식사|숙박|기타)\s*\|/u.test(rawText);
+}
+
+function structuredPreviewLines(rawText: string): string[] {
+  return rawText
+    .replace(/\uFEFF/gu, "")
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function readStructuredField(lines: string[], label: string): string {
+  const labelPattern = new RegExp(`^\\*+\\s*${label}\\s*\\*+$`, "u");
+  const startIndex = lines.findIndex((line) => labelPattern.test(line));
+  if (startIndex < 0) return "";
+  const values: string[] = [];
+  for (let index = startIndex + 1; index < lines.length; index += 1) {
+    const line = lines[index] ?? "";
+    if (/^<<.+>>$/u.test(line) || /^\*+.+\*+$/u.test(line)) break;
+    if (parseStarDayMarker(line)) break;
+    values.push(stripDecorativePrefix(line));
+  }
+  return values.map(cleanText).filter(Boolean).join(", ");
+}
+
+function parseStructuredPreviewInput(rawText: string, title?: string): ItineraryData | null {
+  const lines = structuredPreviewLines(rawText);
+  const detailIndex = lines.findIndex((line) => /^<<\s*상세\s*일정\s*>>$/u.test(line));
+  if (detailIndex < 0) return null;
+
+  const days: DaySchedule[] = [];
+  let currentDay: DaySchedule | null = null;
+  let pendingDate = "";
+
+  for (let index = detailIndex + 1; index < lines.length; index += 1) {
+    const line = lines[index] ?? "";
+    const dayNo = parseStarDayMarker(line);
+    if (dayNo) {
+      if (currentDay) days.push(currentDay);
+      currentDay = { dayNo, date: "", items: [] };
+      pendingDate = "";
+      continue;
+    }
+
+    if (!currentDay) continue;
+    const date = parseDateFromText(line);
+    if (date && !pendingDate && /^20\d{2}-\d{2}-\d{2}$/u.test(date)) {
+      pendingDate = date;
+      currentDay.date = date;
+      continue;
+    }
+
+    const item = parseTypedPreviewItem(line);
+    if (item) currentDay.items.push(item);
+  }
+  if (currentDay) days.push(currentDay);
+  if (days.length === 0) return null;
+
+  const period = readStructuredField(lines, "기간");
+  const rangeMatch = /(20\d{2}[./-]\d{1,2}[./-]\d{1,2})\s*(?:~|-|부터)\s*(20\d{2}[./-]\d{1,2}[./-]\d{1,2})/u.exec(period);
+  const start = rangeMatch?.[1] ? parseDateFromText(rangeMatch[1]) : days[0]?.date || TODAY;
+  const end = rangeMatch?.[2] ? parseDateFromText(rangeMatch[2]) : days[days.length - 1]?.date || start;
+  const groupName = readStructuredField(lines, "상품명") || title || "직접입력 일정";
+  const city = readStructuredField(lines, "방문도시").replace(/^-\s*/u, "");
+  const fareAdult = parseKrwAmount(readStructuredField(lines, "성인1인 총 상품가"));
+  const shoppingRaw = readStructuredField(lines, "쇼핑센터 방문 수");
+  const shopping = /(\d+)/u.exec(shoppingRaw)?.[1];
+
+  const result: ItineraryData = {
+    header: {
+      groupName,
+      writtenAt: TODAY,
+    },
+    overview: {
+      recipient: "",
+      cities: city,
+      travelPeriod: { start, end },
+      passengers: {
+        adult: 0,
+        child: 0,
+        infant: 0,
+        escort: 0,
+        foc: 0,
+      },
+      fare: {
+        adultPerPerson: fareAdult,
+        childPerPerson: 0,
+        infantPerPerson: 0,
+        total: 0,
+        totalWithCard: 0,
+      },
+    },
+    basics: {
+      flight: {
+        departure: readStructuredField(lines, "항공 출발"),
+        arrival: readStructuredField(lines, "항공 귀국"),
+        localVehicle: readStructuredField(lines, "차량"),
+      },
+      accommodation: {
+        hotel: readStructuredField(lines, "숙박호텔"),
+        grade: readStructuredField(lines, "호텔등급"),
+        occupancy: readStructuredField(lines, "1객실이용인원"),
+      },
+      included: readStructuredField(lines, "포함사항"),
+      excluded: readStructuredField(lines, "불포함사항"),
+      optionalTour: "",
+      shoppingCenters: shopping ? Number(shopping) : 0,
+      notes: "",
+    },
+    days: days.map((day, index) => ({
+      ...day,
+      date: day.date || addDays(start, index),
+    })),
+  };
+
+  return enforceAccommodationPolicy(result);
+}
+
 function tryLegacyFastDirectParse(rawText: string): ItineraryParseResult | null {
   if (!looksLikeTypedDirectInput(rawText)) return null;
   try {
@@ -774,6 +935,25 @@ export async function parseDirectInputItineraryWithDiagnostics(
   input: ParseDirectInputParams,
 ): Promise<ItineraryParseResult> {
   if (looksLikeSpreadsheetDirectInput(input.rawText)) {
+    return parseItineraryWithDiagnostics(input);
+  }
+
+  if (looksLikeStructuredPreviewInput(input.rawText)) {
+    const structured = parseStructuredPreviewInput(input.rawText, input.title);
+    if (structured) {
+      const fieldCoverage = collectFieldCoverage(structured);
+      return {
+        itinerary: structured,
+        diagnostics: {
+          source: "fast-text",
+          aiAttempted: false,
+          selectedCandidate: "deterministic-narrative",
+          qualityScore: directQualityScore(structured),
+          fieldCoverage,
+          noiseRemovedCount: 0,
+        },
+      };
+    }
     return parseItineraryWithDiagnostics(input);
   }
 
