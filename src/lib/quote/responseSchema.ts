@@ -1,5 +1,5 @@
 export type QuoteAnswerKind = "AIR" | "LND" | "FEE" | "SUM" | "TEXT";
-export type CurrencyCode = "KRW" | "USD" | "JPY";
+export type CurrencyCode = "KRW" | "USD" | "JPY" | "CAD" | "EUR" | "AUD" | "NZD" | "CNY" | "GBP";
 
 export interface QuoteAnswerSummaryRaw {
   currKndCd: CurrencyCode;
@@ -98,6 +98,9 @@ export const QUOTE_RESPONSE_BASIC_LABEL_PATTERN = new RegExp(
     "합계",
     "지상\\s*요금",
     "지상요금",
+    "개별\\s*요금",
+    "랜드\\s*요금",
+    "현지\\s*요금",
     "공동\\s*경비\\s*요금",
     "공동경비\\s*요금",
     "TC\\s*비용",
@@ -117,6 +120,12 @@ export function normalizeQuoteResponseAliases(text: string): string {
     .replace(/K\s*R\s*W/giu, "KRW")
     .replace(/U\s*S\s*D/giu, "USD")
     .replace(/J\s*P\s*Y/giu, "JPY")
+    .replace(/C\s*A\s*D/giu, "CAD")
+    .replace(/E\s*U\s*R/giu, "EUR")
+    .replace(/A\s*U\s*D/giu, "AUD")
+    .replace(/N\s*Z\s*D/giu, "NZD")
+    .replace(/C\s*N\s*Y/giu, "CNY")
+    .replace(/G\s*B\s*P/giu, "GBP")
     .replace(/1\s*인\s*당/gu, "1인당")
     .replace(/1\s*인\s*(?:당\s*)?예상\s*수익/gu, "1인당 예상수익")
     .replace(/랜드\s*수익/gu, "랜드수익")
@@ -131,6 +140,9 @@ export function normalizeQuoteResponseAliases(text: string): string {
     .replace(/총\s*금액/gu, "공동 경비 요금")
     .replace(/항공\s*요금/gu, "항공 요금")
     .replace(/지상\s*요금/gu, "지상 요금")
+    .replace(/개별\s*요금/gu, "개별 요금")
+    .replace(/랜드\s*요금/gu, "지상 요금")
+    .replace(/현지\s*요금/gu, "지상 요금")
     .replace(/중간\s*경비\s*요금/gu, "공동 경비 요금")
     .replace(/공통\s*경비\s*요금/gu, "공동 경비 요금")
     .replace(/공동\s*경비\s*요금/gu, "공동 경비 요금");

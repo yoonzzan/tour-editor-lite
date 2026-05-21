@@ -9,8 +9,8 @@ import { currentYearInKorea, todayInKorea } from "@/lib/date/korea";
 import {
   QUOTE_RESPONSE_BASIC_AMOUNT_SPECS,
   QUOTE_RESPONSE_BASIC_LABEL_PATTERN,
-  normalizeQuoteResponseAliases,
   type CurrencyCode,
+  normalizeQuoteResponseAliases,
   type QuoteAnswerFactorRaw,
   type QuoteAnswerKind,
   type QuoteAnswerRaw,
@@ -58,10 +58,13 @@ interface LabeledMoneyValue extends MoneyValue {
 }
 
 const ZERO_MONEY: LabeledMoneyValue = { amount: 0, currencyCode: "KRW", found: false };
-const LAND_SECTION_LABEL_PATTERN = /지상\s*요금|지상요금|개별\s*요금/iu;
-const AIR_SECTION_END_PATTERN = /지상\s*요금|지상요금|개별\s*요금|공동\s*경비\s*요금|공동경비\s*요금|답변\s*첨부파일|첨부파일/iu;
+const SUPPORTED_CURRENCY_CODES = ["USD", "JPY", "CAD", "EUR", "AUD", "NZD", "CNY", "GBP"] as const satisfies readonly Exclude<CurrencyCode, "KRW">[];
+const CURRENCY_CODE_PATTERN = /KRW|USD|US\$|JPY|CAD|EUR|AUD|NZD|CNY|CNH|GBP|¥|엔|€|£|\$/iu;
+const LAND_SECTION_LABEL_PATTERN = /지상\s*요금|지상요금|개별\s*요금|개별요금|랜드\s*요금|현지\s*요금/iu;
+const AIR_SECTION_END_PATTERN = /지상\s*요금|지상요금|개별\s*요금|개별요금|랜드\s*요금|현지\s*요금|공동\s*경비\s*요금|공동경비\s*요금|답변\s*첨부파일|첨부파일/iu;
 const FEE_SECTION_LABEL_PATTERN = /공동\s*경비\s*요금|공동경비\s*요금|TC\s*비용/iu;
 const FEE_SECTION_END_PATTERN = /답변\s*첨부파일|첨부파일/iu;
+const REMARK_SECTION_PATTERN = /\n\s*(?:비고사항|대리점\s*공개|최종\s*안내사항|유효기간)(?=$|[\s:：])/iu;
 
 function normalizeText(text: string): string {
   return normalizeQuoteResponseAliases(text)
@@ -81,6 +84,25 @@ function detectCurrency(symbolBefore = "", symbolAfter = ""): CurrencyCode {
   const token = `${symbolBefore} ${symbolAfter}`.toUpperCase();
   if (token.includes("$") || token.includes("USD") || token.includes("US$")) return "USD";
   if (token.includes("¥") || token.includes("JPY") || token.includes("엔")) return "JPY";
+  if (token.includes("CAD")) return "CAD";
+  if (token.includes("EUR") || token.includes("€")) return "EUR";
+  if (token.includes("AUD")) return "AUD";
+  if (token.includes("NZD")) return "NZD";
+  if (token.includes("CNY") || token.includes("CNH")) return "CNY";
+  if (token.includes("GBP") || token.includes("£")) return "GBP";
+  return "KRW";
+}
+
+function detectCurrencyCodeFromText(text: string): CurrencyCode {
+  const upper = text.toUpperCase();
+  if (/USD|US\$|\$/u.test(upper)) return "USD";
+  if (/JPY|¥|엔/u.test(upper)) return "JPY";
+  if (/CAD/u.test(upper)) return "CAD";
+  if (/EUR|€/u.test(upper)) return "EUR";
+  if (/AUD/u.test(upper)) return "AUD";
+  if (/NZD/u.test(upper)) return "NZD";
+  if (/CNY|CNH/u.test(upper)) return "CNY";
+  if (/GBP|£/u.test(upper)) return "GBP";
   return "KRW";
 }
 
@@ -97,7 +119,7 @@ function parseMoneyOccurrences(
   options: { requireExplicitUnit: boolean },
 ): MoneyOccurrence[] {
   const matches: MoneyOccurrence[] = [];
-  const moneyPattern = /(US\$|USD|\$|KRW|JPY|¥)?\s*([+-]?\d[\d,]*)(?:\s*(억원|만원|원|KRW|USD|US\$|JPY|¥|엔|\$))?/giu;
+  const moneyPattern = /(US\$|USD|\$|KRW|JPY|CAD|EUR|AUD|NZD|CNY|CNH|GBP|¥|€|£)?\s*([+-]?\d[\d,]*)(?:\s*(억원|만원|원|KRW|USD|US\$|JPY|CAD|EUR|AUD|NZD|CNY|CNH|GBP|¥|€|£|엔|\$))?/giu;
 
   for (const match of text.matchAll(moneyPattern)) {
     if (!match[2]) continue;
@@ -204,10 +226,24 @@ function sectionText(text: string, start: RegExp, end: RegExp): string {
   return afterStart.slice(0, startMatch[0].length + endMatch.index);
 }
 
+function boundedSectionText(text: string, start: RegExp, fallbackStart: RegExp, end: RegExp): string {
+  const startMatch = start.exec(text) ?? fallbackStart.exec(text);
+  if (!startMatch) return "";
+  const afterStart = text.slice(startMatch.index);
+  const endMatch = end.exec(afterStart.slice(startMatch[0].length));
+  if (!endMatch) return afterStart;
+  return afterStart.slice(0, startMatch[0].length + endMatch.index);
+}
+
 function sectionTextOrEmpty(text: string, start: RegExp, end: RegExp): string {
   const startMatch = start.exec(text);
   if (!startMatch) return "";
   return sectionText(text, start, end);
+}
+
+function gridSectionText(section: string): string {
+  const remarkMatch = REMARK_SECTION_PATTERN.exec(section);
+  return remarkMatch ? section.slice(0, remarkMatch.index) : section;
 }
 
 function fallbackFeeSectionText(text: string): string {
@@ -307,12 +343,8 @@ function parseSummary(text: string): QuoteAnswerSummaryRaw {
     .find((line) => /유효기간|유효합니다/u.test(line));
   const currencyLine = text
     .split("\n")
-    .find((line) => /환율기준|KRW|USD|JPY/u.test(line));
-  const currencyCode = /USD/u.test(currencyLine ?? "")
-    ? "USD"
-    : /JPY|¥|엔/u.test(currencyLine ?? "")
-      ? "JPY"
-      : "KRW";
+    .find((line) => /환율기준/u.test(line) || CURRENCY_CODE_PATTERN.test(line));
+  const currencyCode = detectCurrencyCodeFromText(currencyLine ?? "");
   const persPerFare = amountAfterLabel(text, /1\s*인당\s*NET/iu);
   const explicitProfit = amountAfterLabel(text, /(?:1\s*인당\s*)?예상수익/u);
   const totalSum = amountAfterLabel(text, /(?:최종합계|최종\s*입금가)/u);
@@ -324,7 +356,7 @@ function parseSummary(text: string): QuoteAnswerSummaryRaw {
 
   return {
     currKndCd: currencyCode,
-    untAmt: amountAfterLabel(currencyLine ?? "", /(?:환율기준|KRW|USD|JPY)/u),
+    untAmt: amountAfterLabel(currencyLine ?? "", /(?:환율기준|KRW|USD|US\$|JPY|CAD|EUR|AUD|NZD|CNY|CNH|GBP|¥|€|£)/iu),
     persPerFare,
     add1Amt: inferredProfit,
     totalSum,
@@ -355,16 +387,19 @@ function makeFactor(
 function parseFactorLines(text: string): QuoteAnswerFactorRaw[] {
   const factors: QuoteAnswerFactorRaw[] = [];
   const normalized = removeNonBaseCostLines(text).replace(/[ \t]+/gu, " ");
-  const airSection = sectionText(normalized, /항공\s*요금|항공요금/iu, AIR_SECTION_END_PATTERN);
-  const landSection = sectionText(normalized, LAND_SECTION_LABEL_PATTERN, /공동\s*경비\s*요금|공동경비\s*요금|답변\s*첨부파일|첨부파일/iu);
+  const airSection = boundedSectionText(normalized, /항공\s*요금|항공요금/iu, /항공료|TAX/iu, AIR_SECTION_END_PATTERN);
+  const landSection = boundedSectionText(normalized, LAND_SECTION_LABEL_PATTERN, /지상비|랜드수익/iu, /공동\s*경비\s*요금|공동경비\s*요금|답변\s*첨부파일|첨부파일/iu);
   const explicitFeeSection = sectionTextOrEmpty(normalized, FEE_SECTION_LABEL_PATTERN, FEE_SECTION_END_PATTERN);
   const feeSection = explicitFeeSection || fallbackFeeSectionText(normalized);
+  const airGridSection = gridSectionText(airSection);
+  const landGridSection = gridSectionText(landSection);
+  const feeGridSection = gridSectionText(feeSection);
 
   for (const spec of QUOTE_RESPONSE_BASIC_AMOUNT_SPECS.filter((entry) => entry.ansrKndCd === "AIR")) {
-    const money = bestLabeledMoney(airSection, spec.label);
+    const money = bestLabeledMoney(airGridSection, spec.label);
     if (money.found) factors.push(makeFactor(spec.ansrKndCd, spec.fareNm, spec.amountField === "persPerFare" ? money.amount : 0, spec.amountField === "add1Amt" ? money.amount : 0, money.amount, "", money.currencyCode));
   }
-  const airTotal = sectionLeadingAmount(airSection, /항공\s*요금|항공요금/iu);
+  const airTotal = sectionLeadingAmount(airGridSection, /항공\s*요금|항공요금/iu);
   const hasAirBase = factors.some((factor) => factor.ansrKndCd === "AIR" && factor.fareNm === "항공료");
   if (!hasAirBase && airTotal > 0) {
     const taxAmount = factors.find((factor) => factor.ansrKndCd === "AIR" && factor.fareNm === "TAX")?.totlAmt ?? 0;
@@ -375,12 +410,12 @@ function parseFactorLines(text: string): QuoteAnswerFactorRaw[] {
   }
 
   for (const spec of QUOTE_RESPONSE_BASIC_AMOUNT_SPECS.filter((entry) => entry.ansrKndCd === "LND")) {
-    const money = bestLabeledMoney(landSection, spec.label);
+    const money = bestLabeledMoney(landGridSection, spec.label);
     if (money.found) factors.push(makeFactor(spec.ansrKndCd, spec.fareNm, spec.amountField === "persPerFare" ? money.amount : 0, spec.amountField === "add1Amt" ? money.amount : 0, money.amount, "", money.currencyCode));
   }
   const landBaseIndex = factors.findIndex((factor) => factor.ansrKndCd === "LND" && factor.fareNm === "지상비");
   const hasLandBase = landBaseIndex >= 0;
-  const landTotal = sectionLeadingAmount(landSection, LAND_SECTION_LABEL_PATTERN);
+  const landTotal = sectionLeadingAmount(landGridSection, LAND_SECTION_LABEL_PATTERN);
   const landProfitAmount = factors.find((factor) => factor.ansrKndCd === "LND" && factor.fareNm === "랜드수익")?.totlAmt ?? 0;
   if (!hasLandBase) {
     if (landTotal > 0) {
@@ -390,14 +425,14 @@ function parseFactorLines(text: string): QuoteAnswerFactorRaw[] {
     factors[landBaseIndex] = makeFactor("LND", "지상비", landTotal, 0, landTotal, "", "KRW");
   }
 
-  const feeTotal = sectionLeadingAmount(feeSection, FEE_SECTION_LABEL_PATTERN) || moneyAfterLastLabel(feeSection, /합계/iu)?.amount || 0;
+  const feeTotal = sectionLeadingAmount(feeGridSection, FEE_SECTION_LABEL_PATTERN) || moneyAfterLastLabel(feeGridSection, /합계/iu)?.amount || 0;
   const feeMoneys = QUOTE_RESPONSE_BASIC_AMOUNT_SPECS.filter((entry) => entry.ansrKndCd === "FEE").map((spec) => ({
     spec,
-    money: bestLabeledMoney(feeSection, spec.label),
+    money: bestLabeledMoney(feeGridSection, spec.label),
   }));
   const guideFee = feeMoneys.find((entry) => entry.spec.fareNm === "인솔자비");
-  if (guideFee && !guideFee.money.found && feeTotal > 0 && /(?:보험료|기타|(?<![\p{L}\p{N}])FOC(?![\p{L}\p{N}]))/iu.test(feeSection)) {
-    const misreadGuideFee = bestLabeledMoney(feeSection, /항공료/iu);
+  if (guideFee && !guideFee.money.found && feeTotal > 0 && /(?:보험료|기타|(?<![\p{L}\p{N}])FOC(?![\p{L}\p{N}]))/iu.test(feeGridSection)) {
+    const misreadGuideFee = bestLabeledMoney(feeGridSection, /항공료/iu);
     if (misreadGuideFee.found && misreadGuideFee.amount > 0 && misreadGuideFee.amount < feeTotal) {
       guideFee.money = misreadGuideFee;
     }
@@ -422,7 +457,7 @@ function parseFactorLines(text: string): QuoteAnswerFactorRaw[] {
     if (amount > 0 && spec.fareNm === "기타") hasPositiveEtcFactor = true;
     factors.push(makeFactor(spec.ansrKndCd, spec.fareNm, amount, 0, amount, "", money.currencyCode));
   }
-  if (!hasInsuranceFactor && feeTotal > knownFeeAmount && (/보험료/u.test(feeSection) || (knownFeeAmount > 0 && !hasPositiveEtcFactor))) {
+  if (!hasInsuranceFactor && feeTotal > knownFeeAmount && (/보험료/u.test(feeGridSection) || (knownFeeAmount > 0 && !hasPositiveEtcFactor))) {
     const inferredInsuranceAmount = feeTotal - knownFeeAmount;
     factors.push(makeFactor("FEE", "보험료", inferredInsuranceAmount, 0, inferredInsuranceAmount, "", "KRW"));
   }
@@ -656,8 +691,8 @@ function parseRemarkMoneyItems(_text: string, _passengerCount: number): QuoteIte
 function requiredCurrencyCodes(items: QuoteItem[]): CurrencyCode[] {
   const codes = new Set<CurrencyCode>();
   for (const item of items) {
-    if (item.currencyRateId === "usd") codes.add("USD");
-    if (item.currencyRateId === "jpy") codes.add("JPY");
+    const code = SUPPORTED_CURRENCY_CODES.find((entry) => item.currencyRateId === entry.toLowerCase());
+    if (code) codes.add(code);
   }
   return Array.from(codes);
 }

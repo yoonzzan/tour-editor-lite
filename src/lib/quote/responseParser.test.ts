@@ -481,6 +481,60 @@ describe("parseQuoteResponseText", () => {
     expect(result.quote.summary.total).toBe(7740000);
   });
 
+  it("ignores remark fare references when selecting confirmed airfare rows", () => {
+    const result = parseQuoteResponseText({
+      text: [
+        "최종합계 1,000,000원",
+        "1인당 NET 950,000",
+        "1인당 예상수익 50,000",
+        "항공 요금 800,000원",
+        "항공료 700,000",
+        "TAX 100,000",
+        "합계 800,000",
+        "비고사항",
+        "항공료 35만원 + 유류텍스 20만원 참고",
+        "지상 요금 150,000원",
+        "지상비 150,000",
+      ].join("\n"),
+      quoteHeader: { writtenAt: "2026-05-19", validUntil: "2026-05-19" },
+    });
+
+    expect(result.quote.items.map((item) => [item.category, item.description, item.unitPrice])).toEqual([
+      ["FLIGHT", "항공료", 700000],
+      ["FLIGHT", "TAX", 100000],
+      ["VEHICLE", "지상비", 150000],
+      ["OTHER", "1인당 예상수익", 50000],
+    ]);
+    expect(result.diagnostics.warnings).toEqual([]);
+  });
+
+  it("recognizes foreign summary exchange codes even when all imported rows are KRW", () => {
+    const result = parseQuoteResponseText({
+      text: [
+        "최종합계 1,000,000원",
+        "환율기준 : CAD 1,120",
+        "1인당 NET : 950,000",
+        "1인당 예상수익 : 50,000",
+        "항공 요금 800,000원",
+        "항공료 700,000",
+        "TAX 100,000",
+        "랜드 요금 150,000원",
+        "지상비 150,000",
+      ].join("\n"),
+      quoteHeader: { writtenAt: "2026-05-19", validUntil: "2026-05-19" },
+    });
+
+    expect(result.diagnostics.raw.summary.currKndCd).toBe("CAD");
+    expect(result.diagnostics.raw.summary.untAmt).toBe(1120);
+    expect(result.quote.items.map((item) => [item.category, item.description, item.unitPrice])).toEqual([
+      ["FLIGHT", "항공료", 700000],
+      ["FLIGHT", "TAX", 100000],
+      ["VEHICLE", "지상비", 150000],
+      ["OTHER", "1인당 예상수익", 50000],
+    ]);
+    expect(result.diagnostics.warnings).toEqual([]);
+  });
+
   it("infers meal quantity from passenger text when no passenger count is provided", () => {
     const result = parseQuoteResponseText({
       text: [

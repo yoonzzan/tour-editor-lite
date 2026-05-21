@@ -28,6 +28,7 @@ import {
 import { todayInKorea } from "@/lib/date/korea";
 import { Role, type QuoteCategory, type QuoteExchangeRate, type QuoteItem } from "@/types";
 import type { QuoteResponseParseResult } from "@/lib/quote/responseParser";
+import type { CurrencyCode } from "@/lib/quote/responseSchema";
 
 type PriceMode = "상세" | "총액" | "숨김";
 type QuoteResponseInputMode = "text" | "image";
@@ -288,7 +289,7 @@ export function QuoteEditor({ role }: Props) {
     const required = new Set(parsed.diagnostics.requiredCurrencyCodes);
     const summaryRate = parsed.diagnostics.raw.summary.untAmt;
     const summaryRateCode = parsed.diagnostics.raw.summary.currKndCd;
-    const inferredSummaryRateFor = (code: "USD" | "JPY") => {
+    const inferredSummaryRateFor = (code: CurrencyCode) => {
       if (summaryRate <= 1) return 0;
       if (summaryRateCode === code) return summaryRate;
       if (summaryRateCode === "KRW" && required.size === 1 && required.has(code)) return summaryRate;
@@ -296,9 +297,10 @@ export function QuoteEditor({ role }: Props) {
     };
     const rates = getQuoteExchangeRates(parsed.quote).map((rate) => {
       if (rate.id === DEFAULT_EXCHANGE_RATE_ID) return rate;
-      if (required.has(rate.code as "USD" | "JPY")) {
+      const rateCode = rate.code as CurrencyCode;
+      if (required.has(rateCode)) {
         const existing = exchangeRates.find((current) => current.code === rate.code);
-        const summaryDefault = inferredSummaryRateFor(rate.code as "USD" | "JPY");
+        const summaryDefault = inferredSummaryRateFor(rateCode);
         return {
           ...rate,
           rateToKrw: summaryDefault || (existing && existing.rateToKrw > 1 ? existing.rateToKrw : 0),
