@@ -18,6 +18,9 @@ interface DirectInputGoldenCase {
   vehicle: string;
   shoppingCenters: number;
   optionalTour: string;
+  fareAdult?: number;
+  hotelIncludes?: string[];
+  notesIncludes?: string[];
   days: Record<string, string[]>;
 }
 
@@ -80,6 +83,15 @@ describe("direct input itinerary parser", () => {
     expect(itinerary.basics.flight.localVehicle).toBe(testCase.vehicle);
     expect(itinerary.basics.shoppingCenters).toBe(testCase.shoppingCenters);
     expect(itinerary.basics.optionalTour).toBe(testCase.optionalTour);
+    if (typeof testCase.fareAdult === "number") {
+      expect(itinerary.overview.fare.adultPerPerson).toBe(testCase.fareAdult);
+    }
+    for (const expectedHotel of testCase.hotelIncludes ?? []) {
+      expect(itinerary.basics.accommodation.hotel).toContain(expectedHotel);
+    }
+    for (const expectedNote of testCase.notesIncludes ?? []) {
+      expect(itinerary.basics.notes).toContain(expectedNote);
+    }
     for (const [dayNo, expectedItems] of Object.entries(testCase.days)) {
       expect(itemSummary(itinerary, Number(dayNo))).toEqual(expectedItems);
     }
