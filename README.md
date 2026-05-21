@@ -49,6 +49,10 @@ npm run dev
 | `npm run typecheck` | TypeScript 타입 검사 |
 | `npm run lint` | Next.js/ESLint 검사 |
 | `npm run test` | Vitest 단위 테스트 실행 |
+| `npm run test:parser` | 견적답변, 직접입력, 일정 golden parser 회귀 테스트 |
+| `npm run test:quote-response` | 견적답변 parser/API 회귀 테스트 |
+| `npm run test:itinerary-direct` | 직접입력/AI 일정 parser 회귀 테스트 |
+| `npm run test:itinerary-golden` | 파일 일정 golden fixture 회귀 테스트 |
 | `npm run quality` | typecheck, lint, test, editor TSX 규칙 검사 |
 
 ## Runtime Surface
@@ -94,5 +98,8 @@ src/
 - 이 저장소는 DB를 사용하지 않습니다.
 - 원본 견적 문서 샘플(`.hwp`, `.doc`, `.docx`)은 민감정보 가능성이 있어 기본적으로 git ignore합니다.
 - 업무 날짜와 표시 날짜는 `src/lib/date/korea.ts` 기준으로 처리합니다.
+- 일정 파일에서 견적산출, 비용, 원가표 성격 시트는 일정표 import 대상에서 제외합니다.
+- 파일 첨부 미리보기 텍스트를 직접입력으로 다시 넣는 경우에도 `<<상품 정보>>`, `<<상세 일정>>`, `*1일차*` 구조를 보존해 파싱합니다.
+- 견적답변 자동 가져오기는 확정 요금 그리드 금액만 기본 견적 행으로 반영합니다. 비고사항, 안내문, 유효기간, 대리점 공개 문구의 금액은 기본 행으로 승격하지 않습니다.
 - 견적답변 이미지 OCR은 기본적으로 서버 환경변수 `OPENAI_API_KEY`로 OpenAI Vision을 호출합니다. `NEXT_PUBLIC_OPENAI_API_KEY`처럼 브라우저에 노출되는 이름은 사용하지 마세요.
 - `QUOTE_RESPONSE_OCR_PROVIDER=local`로 설정하면 로컬 Python 환경의 PaddleOCR을 사용합니다. 텍스트 입력 파싱은 OCR provider 설정 없이 동작합니다.
