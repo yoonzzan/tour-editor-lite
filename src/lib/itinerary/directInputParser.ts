@@ -394,7 +394,7 @@ function addMeal(draft: DayDraft, meal: ParsedMeal): void {
 
 function splitActivityText(value: string): string[] {
   return value
-    .split(/\s{2,}|[,，]/u)
+    .split(/\s{2,}|[,，;；]/u)
     .flatMap((part) => part.split(/\s+-\s+/u))
     .map(cleanText)
     .filter(Boolean);
@@ -405,6 +405,36 @@ function splitHyphenScheduleText(value: string): string[] {
     .split(/\s*[-–]\s*/u)
     .map(cleanText)
     .filter(Boolean);
+}
+
+function splitMealAdjacentText(value: string): string[] {
+  return value
+    .split(/\s*[;；]\s*/u)
+    .map(cleanText)
+    .filter(Boolean);
+}
+
+function splitCompactScheduleText(value: string): string[] {
+  const hyphenParts = splitHyphenScheduleText(value);
+  if (hyphenParts.length > 1) return hyphenParts;
+
+  const parts: string[] = [];
+  const mealBlock = new RegExp(`${MEAL_LABEL_PATTERN}\\s*\\([^)]+\\)`, "giu");
+  let lastIndex = 0;
+  for (const match of value.matchAll(mealBlock)) {
+    const index = match.index ?? 0;
+    const before = splitMealAdjacentText(value.slice(lastIndex, index));
+    parts.push(...before);
+    const mealText = cleanText(match[0] ?? "");
+    if (mealText) parts.push(mealText);
+    lastIndex = index + (match[0]?.length ?? 0);
+  }
+
+  const after = splitMealAdjacentText(value.slice(lastIndex));
+  parts.push(...after);
+  if (parts.length > 1) return parts;
+
+  return splitActivityText(value);
 }
 
 function extractBracketedMealBlocks(value: string): { body: string; meals: ParsedMeal[] } {
@@ -419,7 +449,7 @@ function extractBracketedMealBlocks(value: string): { body: string; meals: Parse
 }
 
 function appendActivityEntry(entries: ParsedSimpleEntry[], content: string): void {
-  const text = cleanText(content);
+  const text = cleanText(content).replace(/^[,，;；/\-\s]+|[,，;；/\-\s]+$/gu, "");
   if (!text || isStandaloneMealMarker(text)) return;
   entries.push({ kind: "activity", content: text });
 }
@@ -428,13 +458,17 @@ function appendMealEntry(entries: ParsedSimpleEntry[], meal: ParsedMeal): void {
   entries.push({ kind: "meal", meal });
 }
 
+function appendSimpleSegments(entries: ParsedSimpleEntry[], value: string): void {
+  splitCompactScheduleText(value).forEach((entry) => appendSimpleSegment(entries, entry));
+}
+
 function appendSimpleSegment(entries: ParsedSimpleEntry[], value: string): void {
   const segment = cleanText(value);
   if (!segment || isStandaloneMealMarker(segment)) return;
 
   const postMealActivity = /^(조식|중식|석식|아침|점심|저녁)\s*후\s*(.+)$/u.exec(segment);
   if (postMealActivity?.[1] && postMealActivity[2]) {
-    appendActivityEntry(entries, postMealActivity[2]);
+    appendSimpleSegments(entries, postMealActivity[2]);
     return;
   }
 
@@ -467,9 +501,7 @@ function parseSimpleBody(body: string): ParsedSimpleEntry[] {
   const parts = slashParts.length > 0 ? slashParts : [body];
   for (const part of parts) {
     if (isStandaloneMealMarker(part)) continue;
-    const hyphenParts = splitHyphenScheduleText(part);
-    const segmentTexts = hyphenParts.length > 1 ? hyphenParts : splitActivityText(part);
-    segmentTexts.forEach((entry) => appendSimpleSegment(entries, entry));
+    appendSimpleSegments(entries, part);
   }
 
   extracted.meals.forEach((meal) => appendMealEntry(entries, meal));

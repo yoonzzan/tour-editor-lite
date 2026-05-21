@@ -19,6 +19,15 @@ function nonMealContents(data: ItineraryData): string[] {
   );
 }
 
+function itemSummary(data: ItineraryData, dayNo: number): string[] {
+  const items = data.days.find((day) => day.dayNo === dayNo)?.items ?? [];
+  return items.map((item) =>
+    item.type === "MEAL"
+      ? `${item.type}:${item.mealSlot}:${item.content}`
+      : `${item.type}:${item.content}`,
+  );
+}
+
 describe("direct input itinerary parser", () => {
   it("merges separate date schedule and meal blocks without leaking cost notes", async () => {
     const rawText = `고북수진 가는날 늦게 돌아와서 발맛사지 할 시간이 안돼서  2일차로 넣었습니다  고북수진 가는날 석식 현지식으로만 가능합니다
@@ -126,12 +135,6 @@ describe("direct input itinerary parser", () => {
 6일차: 조식후 오전자유-중식(미케비치씨푸드)- 다낭시내관광(다낭대성당,미케비치,손짜)-석식(한식)-한강크루즈-공항이동`;
 
     const { itinerary } = await parseDirectInputItineraryWithDiagnostics({ rawText, title: "직접입력 일정" });
-    const dayTwoItems = itinerary.days.find((day) => day.dayNo === 2)?.items ?? [];
-    const dayTwoSummary = dayTwoItems.map((item) =>
-      item.type === "MEAL"
-        ? `${item.type}:${item.mealSlot}:${item.content}`
-        : `${item.type}:${item.content}`,
-    );
 
     expect(itinerary.days).toHaveLength(6);
     expect(itinerary.overview.travelPeriod).toEqual({ start: "2026-11-21", end: "2026-11-26" });
@@ -142,13 +145,70 @@ describe("direct input itinerary parser", () => {
     expect(itinerary.basics.included).toContain("한강크루즈");
     expect(itinerary.basics.shoppingCenters).toBe(1);
     expect(itinerary.basics.optionalTour).toBe("노옵션");
-    expect(dayTwoSummary).toEqual([
+    expect(itemSummary(itinerary, 2)).toEqual([
       "OTHER:오전자유",
       "MEAL:lunch:분짜+반세오",
       "SIGHTSEEING:오행산관광",
       "SIGHTSEEING:호이안이동후 호이안관광(씨클로, 바구니배, 야경투어, 소원등)",
       "MEAL:dinner:호이안가정식",
       "OTHER:호텔휴식",
+    ]);
+  });
+
+  it("splits compact simple schedules even without hyphen delimiters", async () => {
+    const rawText = `행사일: 2026-12-01
+인원: 성인8+아동2
+쇼핑 옵션: 쇼핑 0회+노옵션 조건
+차량: 25인승
+
+[간단일정]
+1일차: 조식후 오전자유 중식(한식) 오행산관광 석식(현지식) 호텔휴식
+2일차: 조식후 공항이동`;
+
+    const { itinerary } = await parseDirectInputItineraryWithDiagnostics({ rawText, title: "직접입력 일정" });
+
+    expect(itinerary.overview.travelPeriod).toEqual({ start: "2026-12-01", end: "2026-12-02" });
+    expect(itinerary.overview.passengers.adult).toBe(8);
+    expect(itinerary.overview.passengers.child).toBe(2);
+    expect(itinerary.basics.flight.localVehicle).toBe("25인승");
+    expect(itinerary.basics.shoppingCenters).toBe(0);
+    expect(itinerary.basics.optionalTour).toBe("노옵션");
+    expect(itemSummary(itinerary, 1)).toEqual([
+      "OTHER:오전자유",
+      "MEAL:lunch:한식",
+      "SIGHTSEEING:오행산관광",
+      "MEAL:dinner:현지식",
+      "OTHER:호텔휴식",
+    ]);
+    expect(itemSummary(itinerary, 2)).toEqual(["TRANSFER:공항이동"]);
+  });
+
+  it("splits compact simple schedules with mixed punctuation", async () => {
+    const rawText = `행사일: 2026-12-10
+인원: 성인6+아동0
+옵션: 노옵션
+
+[간단일정]
+1일차: 공항이동; 중식(현지식); 한강크루즈; 석식(한식); 호텔휴식
+2일차: 오전자유; 중식(분짜); 바나산 관광; 다낭이동`;
+
+    const { itinerary } = await parseDirectInputItineraryWithDiagnostics({ rawText, title: "직접입력 일정" });
+
+    expect(itinerary.overview.travelPeriod).toEqual({ start: "2026-12-10", end: "2026-12-11" });
+    expect(itinerary.overview.passengers.adult).toBe(6);
+    expect(itinerary.basics.optionalTour).toBe("노옵션");
+    expect(itemSummary(itinerary, 1)).toEqual([
+      "TRANSFER:공항이동",
+      "MEAL:lunch:현지식",
+      "SIGHTSEEING:한강크루즈",
+      "MEAL:dinner:한식",
+      "OTHER:호텔휴식",
+    ]);
+    expect(itemSummary(itinerary, 2)).toEqual([
+      "OTHER:오전자유",
+      "MEAL:lunch:분짜",
+      "SIGHTSEEING:바나산 관광",
+      "TRANSFER:다낭이동",
     ]);
   });
 
