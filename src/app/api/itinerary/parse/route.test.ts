@@ -14,6 +14,7 @@ afterEach(() => {
   vi.unmock("pdf-parse");
   vi.unmock("pdf-parse/worker");
   vi.unmock("@napi-rs/canvas");
+  vi.unmock("node:module");
 });
 
 async function makeHwpxFile(): Promise<File> {
@@ -796,6 +797,62 @@ describe("/api/itinerary/parse", () => {
     expect(destroy).toHaveBeenCalledTimes(1);
     const contents = payload.itinerary?.days?.flatMap((day) => day.items?.map((item) => item.content ?? "") ?? []) ?? [];
     expect(contents).toContain("신치토세 공항 도착");
+  });
+
+  it("ignores numeric bundled require.resolve values when configuring the PDF worker", async () => {
+    process.env.OPENAI_API_KEY = "";
+    vi.resetModules();
+
+    vi.doMock("node:module", async () => {
+      const actual = await vi.importActual<typeof import("node:module")>("node:module");
+      return {
+        ...actual,
+        createRequire: () => ({
+          resolve: () => 44555,
+        }),
+      };
+    });
+
+    vi.doMock("@napi-rs/canvas", () => ({
+      DOMMatrix: class CanvasDOMMatrix {},
+      ImageData: class CanvasImageData {},
+      Path2D: class CanvasPath2D {},
+    }));
+
+    const setWorker = vi.fn();
+    const PDFParse = Object.assign(vi.fn(() => ({
+      getText: vi.fn(async () => ({
+        text: [
+          "상품명: 북해도 3박4일",
+          "기간: 2026-07-13 ~ 2026-07-16",
+          "1일차 2026-07-13",
+          "- 인천공항 출발",
+          "- 신치토세 공항 도착",
+          "2일차 2026-07-14",
+          "- 비에이 관광",
+        ].join("\n"),
+      })),
+      getScreenshot: vi.fn(),
+      destroy: vi.fn(async () => undefined),
+    })), { setWorker });
+
+    vi.doMock("pdf-parse", () => ({ PDFParse }));
+
+    const { POST } = await import("./route");
+    const formData = new FormData();
+    formData.append("file", new File(["fake pdf"], "hokkaido.pdf", { type: "application/pdf" }));
+
+    const request = {
+      headers: new Headers({ "x-access-code": "test-code" }),
+      formData: async () => formData,
+    } as unknown as NextRequest;
+
+    const response = await POST(request);
+    const payload = (await response.json()) as { error?: string };
+
+    expect(payload.error).toBeUndefined();
+    expect(response.status).toBe(200);
+    expect(setWorker).toHaveBeenCalledWith(expect.stringMatching(/^data:text\/javascript;base64,/u));
   });
 
   it("uses OCR fallback when uploaded PDF has no extractable text", async () => {
