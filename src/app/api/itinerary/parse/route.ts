@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { createRequire } from "node:module";
+import path from "node:path";
 import * as ExcelJS from "exceljs";
 import JSZip from "jszip";
 import type * as CfbType from "cfb";
@@ -18,7 +18,7 @@ const PDF_OCR_MAX_PAGES = 6;
 const PDF_OCR_IMAGE_WIDTH = 1600;
 const PDF_TEXT_MIN_CHARS = 80;
 const MAX_SPREADSHEET_SHEETS = 8;
-const requireFromRoute = createRequire(import.meta.url);
+const PDF_WORKER_PARTS = ["pdfjs-dist", "legacy", "build", "pdf.worker.min.mjs"];
 let pdfWorkerDataUrlPromise: Promise<string> | null = null;
 
 type OcrMessageContent =
@@ -452,14 +452,22 @@ function getPdfWorkerDataUrl(): Promise<string> {
 }
 
 async function loadPdfWorkerDataUrl(): Promise<string> {
-  try {
-    const workerPath = requireFromRoute.resolve("pdfjs-dist/legacy/build/pdf.worker.min.mjs");
-    const workerSource = await readFile(workerPath);
-    return `data:text/javascript;base64,${workerSource.toString("base64")}`;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "unknown error";
-    throw new Error(`PDF worker 초기화에 실패했습니다. pdf.worker.min.mjs를 data URL로 준비할 수 없습니다. (${message})`);
+  const errors: string[] = [];
+  for (const workerPath of pdfWorkerPathCandidates()) {
+    try {
+      const workerSource = await readFile(workerPath);
+      return `data:text/javascript;base64,${workerSource.toString("base64")}`;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "unknown error";
+      errors.push(`${workerPath}: ${message}`);
+    }
   }
+
+  throw new Error(`PDF worker 초기화에 실패했습니다. pdf.worker.min.mjs를 data URL로 준비할 수 없습니다. (${errors.join("; ")})`);
+}
+
+function pdfWorkerPathCandidates(): string[] {
+  return [path.join(process.cwd(), "node_modules", ...PDF_WORKER_PARTS)];
 }
 
 function extractOcrText(payload: OcrChatCompletionResponse): string {
