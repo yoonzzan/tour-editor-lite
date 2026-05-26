@@ -177,30 +177,49 @@ async function ensurePdfCanvasGlobals(): Promise<void> {
     DOMMatrix?: typeof DOMMatrix;
     ImageData?: typeof ImageData;
     Path2D?: typeof Path2D;
+    pdfjsWorker?: {
+      WorkerMessageHandler?: unknown;
+    };
   };
 
-  if (globalObject.DOMMatrix && globalObject.ImageData && globalObject.Path2D) return;
-
-  let canvas: typeof import("@napi-rs/canvas");
-  try {
-    canvas = await import("@napi-rs/canvas");
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "unknown error";
-    throw new Error(`PDF 렌더링 환경 초기화에 실패했습니다. @napi-rs/canvas를 불러올 수 없습니다. (${message})`);
-  }
-
-  if (!globalObject.DOMMatrix && canvas.DOMMatrix) {
-    globalObject.DOMMatrix = canvas.DOMMatrix as unknown as typeof DOMMatrix;
-  }
-  if (!globalObject.ImageData && canvas.ImageData) {
-    globalObject.ImageData = canvas.ImageData as unknown as typeof ImageData;
-  }
-  if (!globalObject.Path2D && canvas.Path2D) {
-    globalObject.Path2D = canvas.Path2D as unknown as typeof Path2D;
-  }
-
   if (!globalObject.DOMMatrix || !globalObject.ImageData || !globalObject.Path2D) {
-    throw new Error("PDF 렌더링 환경 초기화에 실패했습니다. PDF 처리에 필요한 canvas API를 사용할 수 없습니다.");
+    let canvas: typeof import("@napi-rs/canvas");
+    try {
+      canvas = await import("@napi-rs/canvas");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "unknown error";
+      throw new Error(`PDF 렌더링 환경 초기화에 실패했습니다. @napi-rs/canvas를 불러올 수 없습니다. (${message})`);
+    }
+
+    if (!globalObject.DOMMatrix && canvas.DOMMatrix) {
+      globalObject.DOMMatrix = canvas.DOMMatrix as unknown as typeof DOMMatrix;
+    }
+    if (!globalObject.ImageData && canvas.ImageData) {
+      globalObject.ImageData = canvas.ImageData as unknown as typeof ImageData;
+    }
+    if (!globalObject.Path2D && canvas.Path2D) {
+      globalObject.Path2D = canvas.Path2D as unknown as typeof Path2D;
+    }
+
+    if (!globalObject.DOMMatrix || !globalObject.ImageData || !globalObject.Path2D) {
+      throw new Error("PDF 렌더링 환경 초기화에 실패했습니다. PDF 처리에 필요한 canvas API를 사용할 수 없습니다.");
+    }
+  }
+
+  if (!globalObject.pdfjsWorker?.WorkerMessageHandler) {
+    let worker: typeof import("pdfjs-dist/legacy/build/pdf.worker.mjs");
+    try {
+      worker = await import("pdfjs-dist/legacy/build/pdf.worker.mjs");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "unknown error";
+      throw new Error(`PDF worker 초기화에 실패했습니다. pdf.worker.mjs를 불러올 수 없습니다. (${message})`);
+    }
+
+    if (!worker.WorkerMessageHandler) {
+      throw new Error("PDF worker 초기화에 실패했습니다. WorkerMessageHandler를 사용할 수 없습니다.");
+    }
+
+    globalObject.pdfjsWorker = worker;
   }
 }
 
