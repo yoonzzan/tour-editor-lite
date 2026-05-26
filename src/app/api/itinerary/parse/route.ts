@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import * as ExcelJS from "exceljs";
 import JSZip from "jszip";
 import type * as CfbType from "cfb";
@@ -16,6 +18,8 @@ const PDF_OCR_MAX_PAGES = 6;
 const PDF_OCR_IMAGE_WIDTH = 1600;
 const PDF_TEXT_MIN_CHARS = 80;
 const MAX_SPREADSHEET_SHEETS = 8;
+const requireFromRoute = createRequire(import.meta.url);
+let pdfWorkerDataUrlPromise: Promise<string> | null = null;
 
 type OcrMessageContent =
   | { type: "text"; text: string }
@@ -165,6 +169,240 @@ function stripPdfPageMarkers(text: string): string {
     .trim();
 }
 
+function cleanPdfLine(line: string): string {
+  return line
+    .replace(/\u0000/gu, " ")
+    .replace(/\t+/gu, " ")
+    .replace(/[ \u00a0]+/gu, " ")
+    .trim();
+}
+
+function repairPdfBrokenWords(text: string): string {
+  return cleanPdfLine(text)
+    .replace(/차\s+량/gu, "차량")
+    .replace(/전\s+용\s*버스/gu, "전용버스")
+    .replace(/기\s+내\s+식/gu, "기내식")
+    .replace(/호\s+텔\s+식/gu, "호텔식")
+    .replace(/현\s+지\s+식/gu, "현지식")
+    .replace(/한\s+식/gu, "한식")
+    .replace(/오\s+전/gu, "오전")
+    .replace(/전\s+일/gu, "전일")
+    .replace(/인\s+천/gu, "인천")
+    .replace(/나\s+하/gu, "나하")
+    .replace(/온\s+나\s+손/gu, "온나손")
+    .replace(/차\s+탄/gu, "차탄")
+    .replace(/슈\s+리/gu, "슈리")
+    .replace(/\s+([),.])/gu, "$1")
+    .replace(/([(])\s+/gu, "$1")
+    .trim();
+}
+
+function pdfMealSlotLabel(slot: "breakfast" | "lunch" | "dinner"): string {
+  if (slot === "breakfast") return "조식";
+  if (slot === "lunch") return "중식";
+  return "석식";
+}
+
+function extractPdfMeals(line: string): Array<{ slot: "breakfast" | "lunch" | "dinner"; text: string }> {
+  const meals: Array<{ slot: "breakfast" | "lunch" | "dinner"; text: string }> = [];
+  const pattern = /(?:^|\s)([조중석])\s*[:：]\s*([\s\S]*?)(?=\s+[조중석]\s*[:：]|$)/gu;
+  for (const match of line.matchAll(pattern)) {
+    const marker = match[1];
+    const rawText = repairPdfBrokenWords(match[2] ?? "")
+      .replace(/^[/:：\s]+/u, "")
+      .replace(/\s+(?:HOTEL|Hyatt|Holiday Inn|Radisson|Add)\b.*$/iu, "")
+      .trim();
+    if (!marker || !rawText || rawText === "X") continue;
+    const slot = marker === "조" ? "breakfast" : marker === "중" ? "lunch" : "dinner";
+    meals.push({ slot, text: rawText });
+  }
+  return meals;
+}
+
+function removePdfMealFragments(line: string): string {
+  return repairPdfBrokenWords(line)
+    .replace(/(?:^|\s)[조중석]\s*[:：]\s*[\s\S]*?(?=\s+[조중석]\s*[:：]|$)/gu, " ")
+    .replace(/\s{2,}/gu, " ")
+    .trim();
+}
+
+function isPdfFooterOrContactLine(line: string): boolean {
+  return /(?:^|\s)(?:Add|Tel|TEL|T|F|E)\s*[:：-]/iu.test(line)
+    || /[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/u.test(line)
+    || /\+\d{1,3}\s*\d/u.test(line)
+    || isPdfTrailerStartLine(line);
+}
+
+function isPdfTrailerStartLine(line: string): boolean {
+  return /^(?:감사합니다|참고사항|※?\s*상기\s*일정|[-•·]?\s*(?:환율|가이드\s*통역비|휴관)|.*TEMPORARILY|.*TEMPORÄR)/iu.test(line);
+}
+
+function isPdfScheduleHeaderLine(line: string): boolean {
+  const compact = line.replace(/\s+/gu, "");
+  return /^(?:날짜|일자|도시명|교통편|시각|시간|세부일정|제공식사|행사일정|숙박시설)+$/u.test(compact)
+    || /^(?:날짜지역교통편시간행사일정식사)$/u.test(compact)
+    || /^(?:일정식사)$/u.test(compact);
+}
+
+function isPdfBareDateOrTimeLine(line: string): boolean {
+  const compact = line.replace(/\s+/gu, "");
+  return /^\(?\d{1,2}[./]\d{1,2}\.?\)?(?:\([^)]+\))?$/u.test(compact)
+    || /^\([월화수목금토일]\)$/u.test(compact)
+    || /^\d{1,2}:\d{2}$/u.test(compact)
+    || /^\d{1,2}::\d{2}$/u.test(compact)
+    || /^(?:(?:\([^)]*\))?호텔종료|오전|전일|차량|전용차량|전용버스|조식|중식|석식|OZ\d{3,4}|KE\d{3,4}|AY\s?\d{2,4}|TW\d{3,4})$/iu.test(compact);
+}
+
+function isPdfStructuralScheduleColumn(text: string): boolean {
+  const compact = text.replace(/\s+/gu, "");
+  return compact.length <= 10
+    && (
+      isPdfBareDateOrTimeLine(compact)
+      || /^(?:전용)?(?:버스|차량|전용버스|전용차량)$/u.test(compact)
+      || /^[가-힣A-Za-z]{1,10}$/u.test(compact)
+      || /^[A-Z]{2}\d{2,4}$/iu.test(compact)
+    );
+}
+
+function hasPdfScheduleSignal(line: string): boolean {
+  return /(?:HOTEL|Hyatt|Holiday Inn|Radisson|출발|도착|이동|관광|탐방|방문|견학|수속|집결|체크|호텔|투숙|휴식|중식|석식|조식|만찬|자유|산책|관람|공원|수족관|성|광장|대성당|박물관|궁전|쇼|탑승|공항|가이드|미팅|문화|기관|수도원|운하|폭포|연못|라벤더|국립공원|사옥|생산공장|본사|캠퍼스|지옥계곡|시키사이노오카)/iu.test(line);
+}
+
+function pdfScheduleItemType(line: string): "이동" | "관광" | "숙박" | "기타" {
+  if (/(?:^| )(?:HOTEL|Hyatt|Holiday Inn|Radisson)\b|\d?\s*성급\s*호텔|호텔\s*(?:투숙|체크인|종료)|리조트\s*도착|기\s*내\s*숙\s*박|동급/iu.test(line)) {
+    return "숙박";
+  }
+  if (/(?:출발|도착|이동|공항|수속|집결|체크아웃|가이드\s*미팅|전용차량|전용버스|\b[A-Z]{2}\s?\d{2,4}\b)/iu.test(line)) {
+    return "이동";
+  }
+  if (/(?:관광|탐방|방문|견학|산책|관람|공원|수족관|성|광장|대성당|박물관|쇼|수도원|운하|폭포|연못|라벤더|국립공원|사옥|생산공장|본사|캠퍼스|자유일정|쇼핑)/u.test(line)) {
+    return "관광";
+  }
+  return "기타";
+}
+
+function normalizePdfHotelLine(line: string): string {
+  return repairPdfBrokenWords(line)
+    .replace(/^♣?\s*HOTEL\s*[:：]\s*/iu, "")
+    .replace(/\(\s*\+\d[\s\S]*$/u, "")
+    .replace(/\s+Add\s*[:：][\s\S]*$/iu, "")
+    .trim();
+}
+
+function isPdfHotelContactLine(line: string): boolean {
+  return /^(?:♣?\s*HOTEL\s*[:：]|Hyatt\b|Holiday Inn\b|Radisson\b)/iu.test(line);
+}
+
+function normalizePdfScheduleLine(line: string): string {
+  return repairPdfBrokenWords(line)
+    .replace(/^[▶□■└n•·\-→|\s]+/u, "")
+    .replace(/\s*\*약\s*/gu, " 약 ")
+    .replace(/\b\d{1,2}[:;]\d{2}(?:\(\+1\))?\b/gu, " ")
+    .replace(/\s{2,}/gu, " ")
+    .trim();
+}
+
+function stripPdfLeadingScheduleColumns(line: string): string {
+  const parts = line.split("|").map((part) => repairPdfBrokenWords(part)).filter(Boolean);
+  if (parts.length < 2) return line;
+
+  const tail = parts[parts.length - 1];
+  const head = parts.slice(0, -1);
+  if (tail && hasPdfScheduleSignal(tail) && head.every(isPdfStructuralScheduleColumn)) {
+    return tail;
+  }
+
+  return line;
+}
+
+function normalizePdfExtractedText(text: string): string {
+  const sourceLines = stripPdfPageMarkers(text)
+    .split("\n")
+    .map(cleanPdfLine)
+    .filter(Boolean);
+  const output: string[] = [];
+  const seenByDay = new Map<number, Set<string>>();
+  let currentDayNo = 0;
+  let trailerStarted = false;
+  let pageInterludeStarted = false;
+
+  const pushUnique = (dayNo: number, line: string): void => {
+    const seen = seenByDay.get(dayNo) ?? new Set<string>();
+    if (seen.has(line)) return;
+    seen.add(line);
+    seenByDay.set(dayNo, seen);
+    output.push(line);
+  };
+
+  const processScheduleLine = (rawLine: string): void => {
+    if (currentDayNo <= 0) return;
+    const line = normalizePdfScheduleLine(rawLine);
+    if (isPdfHotelContactLine(line)) {
+      const hotel = normalizePdfHotelLine(line);
+      if (hotel) pushUnique(currentDayNo, `- 숙박 | ${hotel}`);
+      return;
+    }
+    if (!line || (isPdfFooterOrContactLine(line) && !isPdfHotelContactLine(line)) || isPdfScheduleHeaderLine(line) || isPdfBareDateOrTimeLine(line)) return;
+
+    const meals = extractPdfMeals(line);
+    for (const meal of meals) {
+      pushUnique(currentDayNo, `- 식사 | ${pdfMealSlotLabel(meal.slot)}: ${meal.text}`);
+    }
+
+    const withoutMeals = removePdfMealFragments(line)
+      .replace(/^\(?\d{1,2}[./]\d{1,2}\.?\)?\s*/u, "")
+      .replace(/^\([월화수목금토일]\)\s*/u, "")
+      .trim();
+    const contentLine = stripPdfLeadingScheduleColumns(withoutMeals);
+    if (!contentLine || isPdfBareDateOrTimeLine(contentLine) || !hasPdfScheduleSignal(contentLine)) return;
+
+    const hotel = /^(?:♣?\s*)?HOTEL\s*[:：]/iu.test(contentLine) || /^(?:Hyatt|Holiday Inn|Radisson)\b/iu.test(contentLine)
+      ? normalizePdfHotelLine(contentLine)
+      : "";
+    if (hotel) {
+      pushUnique(currentDayNo, `- 숙박 | ${hotel}`);
+      return;
+    }
+
+    const type = pdfScheduleItemType(contentLine);
+    pushUnique(currentDayNo, `- ${type} | ${contentLine}`);
+  };
+
+  for (const rawLine of sourceLines) {
+    const line = repairPdfBrokenWords(rawLine);
+    if (!line) continue;
+    const dayMatch = /^(?:제\s*)?0?(\d{1,2})\s*일차?\s*(.*)$/u.exec(line);
+    if (dayMatch?.[1]) {
+      pageInterludeStarted = false;
+      currentDayNo = Number(dayMatch[1]);
+      output.push(`*${currentDayNo}일차*`);
+      const rest = dayMatch[2]?.trim();
+      if (rest) processScheduleLine(rest);
+      continue;
+    }
+    if (/\.xlsx$/iu.test(line)) {
+      pageInterludeStarted = true;
+      continue;
+    }
+    if (pageInterludeStarted) continue;
+    if (isPdfTrailerStartLine(line)) {
+      trailerStarted = true;
+      continue;
+    }
+    if (isPdfFooterOrContactLine(line) && !isPdfHotelContactLine(line)) continue;
+    if (trailerStarted) continue;
+
+    if (currentDayNo === 0) {
+      if (!isPdfScheduleHeaderLine(line)) output.push(line);
+      continue;
+    }
+
+    processScheduleLine(line);
+  }
+
+  return output.length > 0 ? output.join("\n") : stripPdfPageMarkers(text);
+}
+
 function isMeaningfulPdfText(text: string): boolean {
   const cleaned = stripPdfPageMarkers(text);
   const compact = cleaned.replace(/\s+/gu, "");
@@ -177,9 +415,6 @@ async function ensurePdfCanvasGlobals(): Promise<void> {
     DOMMatrix?: typeof DOMMatrix;
     ImageData?: typeof ImageData;
     Path2D?: typeof Path2D;
-    pdfjsWorker?: {
-      WorkerMessageHandler?: unknown;
-    };
   };
 
   if (!globalObject.DOMMatrix || !globalObject.ImageData || !globalObject.Path2D) {
@@ -205,21 +440,25 @@ async function ensurePdfCanvasGlobals(): Promise<void> {
       throw new Error("PDF 렌더링 환경 초기화에 실패했습니다. PDF 처리에 필요한 canvas API를 사용할 수 없습니다.");
     }
   }
+}
 
-  if (!globalObject.pdfjsWorker?.WorkerMessageHandler) {
-    let worker: typeof import("pdfjs-dist/legacy/build/pdf.worker.mjs");
-    try {
-      worker = await import("pdfjs-dist/legacy/build/pdf.worker.mjs");
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "unknown error";
-      throw new Error(`PDF worker 초기화에 실패했습니다. pdf.worker.mjs를 불러올 수 없습니다. (${message})`);
-    }
+async function configurePdfWorker(PDFParse: typeof import("pdf-parse").PDFParse): Promise<void> {
+  PDFParse.setWorker(await getPdfWorkerDataUrl());
+}
 
-    if (!worker.WorkerMessageHandler) {
-      throw new Error("PDF worker 초기화에 실패했습니다. WorkerMessageHandler를 사용할 수 없습니다.");
-    }
+function getPdfWorkerDataUrl(): Promise<string> {
+  pdfWorkerDataUrlPromise ??= loadPdfWorkerDataUrl();
+  return pdfWorkerDataUrlPromise;
+}
 
-    globalObject.pdfjsWorker = worker;
+async function loadPdfWorkerDataUrl(): Promise<string> {
+  try {
+    const workerPath = requireFromRoute.resolve("pdfjs-dist/legacy/build/pdf.worker.min.mjs");
+    const workerSource = await readFile(workerPath);
+    return `data:text/javascript;base64,${workerSource.toString("base64")}`;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "unknown error";
+    throw new Error(`PDF worker 초기화에 실패했습니다. pdf.worker.min.mjs를 data URL로 준비할 수 없습니다. (${message})`);
   }
 }
 
@@ -292,11 +531,12 @@ async function callPdfOcr(pageImages: string[]): Promise<string> {
 async function pdfToText(file: File): Promise<string> {
   await ensurePdfCanvasGlobals();
   const { PDFParse } = await import("pdf-parse");
+  await configurePdfWorker(PDFParse);
   const arrayBuffer = await file.arrayBuffer();
   const parser = new PDFParse({ data: new Uint8Array(arrayBuffer) });
   try {
     const result = await parser.getText();
-    if (isMeaningfulPdfText(result.text)) return stripPdfPageMarkers(result.text);
+    if (isMeaningfulPdfText(result.text)) return normalizePdfExtractedText(result.text);
 
     const screenshot = await parser.getScreenshot({
       desiredWidth: PDF_OCR_IMAGE_WIDTH,
@@ -307,9 +547,9 @@ async function pdfToText(file: File): Promise<string> {
     const pageImages = screenshot.pages
       .map((page) => page.dataUrl)
       .filter(Boolean);
-    if (pageImages.length === 0) return stripPdfPageMarkers(result.text);
+    if (pageImages.length === 0) return normalizePdfExtractedText(result.text);
 
-    return await callPdfOcr(pageImages);
+    return normalizePdfExtractedText(await callPdfOcr(pageImages));
   } finally {
     await parser.destroy();
   }

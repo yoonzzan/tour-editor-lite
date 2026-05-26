@@ -14,6 +14,86 @@ const FIELD_COVERAGE_BASELINES = [
 ];
 const INLINE_EXPECTATIONS: Array<{ marker: string; expected: GoldenExpected }> = [
   {
+    marker: "(1)일정(OZ)-견적용 (1)",
+    expected: {
+      dayCount: 4,
+      requiredContents: ["지옥계곡", "노보리벳츠 시대촌", "오타루 오르골당", "흰수염폭포", "팜토미타", "치토세공항"],
+      requiredMeals: [
+        { slot: "breakfast", valueIncludes: "호텔식" },
+        { slot: "lunch", valueIncludes: "현지식" },
+        { slot: "dinner", valueIncludes: "호텔식" },
+      ],
+      requiredHotels: ["노보리벳츠 미야비테이 호텔", "프리미어호텔 츠바키 삿포로", "죠잔케이뷰 호텔"],
+      forbiddenContents: ["차 / 량", "오 / 전", "일정은", "안성시", "0316778115hj"],
+      forbiddenVehicleContents: ["노보리벳츠 시대촌", "전일 조식"],
+    },
+  },
+  {
+    marker: "0417스페인 9일",
+    expected: {
+      dayCount: 9,
+      requiredContents: [
+        "몬세라트 수도원",
+        "Mercado de San Miguel",
+        "알함브라",
+        "Metropol Parasol",
+        "누에보 다리",
+        "사보르 아 말라가",
+        "사그라다 파밀리아",
+        "인천 도착",
+      ],
+      requiredHotels: ["4성급 호텔"],
+      forbiddenContents: ["참고사항", "상기 일정", "환율", "TEMPOR"],
+    },
+  },
+  {
+    marker: "1[고객일정표] 오키나와 4일간_260504",
+    expected: {
+      dayCount: 4,
+      requiredContents: [
+        "슈리성",
+        "아메리칸 빌리지",
+        "비세 후쿠기",
+        "츄라우미 수족관",
+        "만좌모",
+        "국제거리",
+        "나하 국제공항",
+      ],
+      requiredMeals: [
+        { slot: "breakfast", valueIncludes: "호텔식" },
+        { slot: "lunch", valueIncludes: "현지식" },
+        { slot: "dinner", valueIncludes: "호텔뷔페" },
+      ],
+      requiredHotels: ["Hyatt Seragaki Island", "Hyatt Regency Naha"],
+      forbiddenContents: ["+81", "Add:", "나 / 하", "호 / 텔 / 식"],
+    },
+  },
+  {
+    marker: "우아한여행_삼성물산_260610_상세일정표",
+    expected: {
+      dayCount: 9,
+      minQualityScore: 68,
+      requiredContents: [
+        "Zent Frenger",
+        "하이델베르크성",
+        "Ziehl-Abegg",
+        "Museum Würth",
+        "뢰머광장",
+        "슈퍼셀",
+        "시벨리우스 공원",
+        "눅시오국립공원",
+        "인천 국제 공항 도착",
+      ],
+      requiredMeals: [
+        { slot: "breakfast", valueIncludes: "호텔식" },
+        { slot: "lunch", valueIncludes: "현지식" },
+        { slot: "dinner", valueIncludes: "한식" },
+      ],
+      requiredHotels: ["Holiday Inn Frankfurt", "Radisson Blu Royal"],
+      forbiddenContents: ["참고사항", "가이드 통역비", "환율", "감사합니다"],
+    },
+  },
+  {
     marker: "싱가폴 3박 24년 10월 15일",
     expected: {
       requiredContents: ["인천공항 3층 출국장 도착 후 출국수속", "싱가폴 이색 문화 체험", "머라이언공원"],
@@ -34,7 +114,7 @@ const INLINE_EXPECTATIONS: Array<{ marker: string; expected: GoldenExpected }> =
     },
   },
 ];
-const SUPPORTED_EXTENSIONS = new Set([".xlsx", ".txt"]);
+const SUPPORTED_EXTENSIONS = new Set([".xlsx", ".txt", ".pdf"]);
 const UNSUPPORTED_EXTENSIONS = new Set([".xls"]);
 const NOISE_PATTERNS = [
   /견적\s*번호/u,
@@ -60,6 +140,7 @@ interface GoldenExpected {
   }>;
   requiredHotels?: string[];
   forbiddenContents?: string[];
+  forbiddenVehicleContents?: string[];
 }
 
 interface GoldenCase {
@@ -99,6 +180,7 @@ function contentTypeFor(extension: string): string {
     return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
   }
   if (extension === ".xls") return "application/vnd.ms-excel";
+  if (extension === ".pdf") return "application/pdf";
   return "text/plain";
 }
 
@@ -130,6 +212,10 @@ function loadExpected(testCase: GoldenCase): GoldenExpected | null {
     requiredMeals: [...(fileExpected.requiredMeals ?? []), ...(inlineExpected.requiredMeals ?? [])],
     requiredHotels: [...(fileExpected.requiredHotels ?? []), ...(inlineExpected.requiredHotels ?? [])],
     forbiddenContents: [...(fileExpected.forbiddenContents ?? []), ...(inlineExpected.forbiddenContents ?? [])],
+    forbiddenVehicleContents: [
+      ...(fileExpected.forbiddenVehicleContents ?? []),
+      ...(inlineExpected.forbiddenVehicleContents ?? []),
+    ],
   };
 }
 
@@ -223,13 +309,16 @@ describe("itinerary golden fixtures", () => {
       expect(itemTexts.some((value) => pattern.test(value)), testCase.name).toBe(false);
     }
     for (const forbidden of forbiddenContents) {
-      expect(includesText(itemTexts, forbidden), testCase.name).toBe(false);
+      expect(includesText(itemTexts, forbidden), `${testCase.name} forbidden ${forbidden}`).toBe(false);
+    }
+    for (const forbidden of expected?.forbiddenVehicleContents ?? []) {
+      expect(itinerary.basics.flight.localVehicle.includes(forbidden), `${testCase.name} vehicle ${forbidden}`).toBe(false);
     }
     for (const required of expected?.requiredContents ?? []) {
-      expect(includesText(itemTexts, required), testCase.name).toBe(true);
+      expect(includesText(itemTexts, required), `${testCase.name} required ${required}`).toBe(true);
     }
     for (const hotel of expected?.requiredHotels ?? []) {
-      expect(includesText(itemTexts, hotel), testCase.name).toBe(true);
+      expect(includesText(itemTexts, hotel), `${testCase.name} hotel ${hotel}`).toBe(true);
     }
     for (const meal of expected?.requiredMeals ?? []) {
       const hasMeal = itinerary.days.some((day) =>
