@@ -1,19 +1,29 @@
-# AGENTS.md — Tour Editor
+# AGENTS.md — Tour Editor Lite
 # 에이전트가 실수할 때마다 규칙 1줄 추가. 삭제하지 않는다.
 # 이 파일이 프로젝트의 '학습된 지혜'다.
 
+## 출력 잘림 대응 규칙
+도구 출력(bash, file read, MCP, web fetch 등)에서 다음 신호가 보이면 절대 추측으로 채우지 말 것:
+- `[output truncated]`, `tokens omitted`, `truncated`, `...`, `showing first N`
+- 결과 개수가 명시적 한도와 같음 (예: limit 50인데 정확히 50개)
+
+대응 순서:
+1. 사용자에게 명시적으로 "출력이 잘렸습니다" 라고 먼저 알릴 것
+2. 잘린 부분의 내용을 추측하거나 "문제 없는 것으로 보임" 같은 결론을 내지 말 것
+3. `rg` / `head` / `tail` / 페이지네이션 / 더 좁은 쿼리로 재시도 후에만 결론 도출
+
 ## Project
-- Name: tour-editor
+- Name: tour-editor-lite
 - Language: TypeScript (strict)
 - Framework: Next.js 15 (App Router)
 
 ## Commands
 - Build: `npm run build`
 - Test: `npm run test`
-- E2E: `npm run test:e2e`
 - Lint: `npm run lint`
 - Type Check: `npm run typecheck`
 - Quality Gate: `npm run quality`
+- E2E: 현재 `package.json`에 스크립트 없음
 
 ## 작업 완료 기준 (Quality Gate)
 작업이 완료됐다고 선언하기 전 반드시:
@@ -51,6 +61,7 @@
 - 5회 실패하면 → 중단하고 사람에게 보고
 - 같은 파일을 5번 이상 수정하면 → 전체 설계 재검토 신호
 - 타입 에러가 10개 이상이면 → 타입 파일부터 재설계
+- GitNexus stale 경고 후 `npx gitnexus analyze`가 CLI 오류로 실패하면 실패 사실을 보고하고, stale index 기반 결론을 확정하지 않는다
 
 ## 실수 기록 (발생할 때마다 추가)
 # [날짜] — 무엇이 잘못됐는가 → 앞으로 어떻게 할 것인가
@@ -70,48 +81,6 @@
 - `rm -rf` 위험 명령
 - 하드코딩된 역할 문자열 — `Role` enum 사용
 - `shadow-popover` — `src/components/editor/**`, `src/app/(popup)/**` 내 TSX에서 사용 금지(어두운 스크림 위 밝은 테두리 착시); `shadow-none` + `border` — `npm run quality`가 검사
-# GitNexus — Code Intelligence
-
-This project is indexed by GitNexus as **tour-editor** (3632 symbols, 6614 relationships, 272 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
-
-> If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
-
-## Always Do
-
-- **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `gitnexus_impact({target: "symbolName", direction: "upstream"})` and report the blast radius (direct callers, affected processes, risk level) to the user.
-- **MUST run `gitnexus_detect_changes()` before committing** to verify your changes only affect expected symbols and execution flows.
-- **MUST warn the user** if impact analysis returns HIGH or CRITICAL risk before proceeding with edits.
-- When exploring unfamiliar code, use `gitnexus_query({query: "concept"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
-- When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `gitnexus_context({name: "symbolName"})`.
-
-## Never Do
-
-- NEVER edit a function, class, or method without first running `gitnexus_impact` on it.
-- NEVER ignore HIGH or CRITICAL risk warnings from impact analysis.
-- NEVER rename symbols with find-and-replace — use `gitnexus_rename` which understands the call graph.
-- NEVER commit changes without running `gitnexus_detect_changes()` to check affected scope.
-
-## Resources
-
-| Resource | Use for |
-|----------|---------|
-| `gitnexus://repo/tour-editor/context` | Codebase overview, check index freshness |
-| `gitnexus://repo/tour-editor/clusters` | All functional areas |
-| `gitnexus://repo/tour-editor/processes` | All execution flows |
-| `gitnexus://repo/tour-editor/process/{name}` | Step-by-step execution trace |
-
-## CLI
-
-| Task | Read this skill file |
-|------|---------------------|
-| Understand architecture / "How does X work?" | `.claude/skills/gitnexus/gitnexus-exploring/SKILL.md` |
-| Blast radius / "What breaks if I change X?" | `.claude/skills/gitnexus/gitnexus-impact-analysis/SKILL.md` |
-| Trace bugs / "Why is X failing?" | `.claude/skills/gitnexus/gitnexus-debugging/SKILL.md` |
-| Rename / extract / split / refactor | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
-| Tools, resources, schema reference | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
-| Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
-
-<!-- gitnexus:end -->
 
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence

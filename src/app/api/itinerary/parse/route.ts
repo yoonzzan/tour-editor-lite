@@ -172,6 +172,38 @@ function isMeaningfulPdfText(text: string): boolean {
   return compact.length >= 30 && /(?:견적|일정|호텔|출발|도착|조식|중식|석식|아침|점심|저녁|포함|불포함)/u.test(compact);
 }
 
+async function ensurePdfCanvasGlobals(): Promise<void> {
+  const globalObject = globalThis as typeof globalThis & {
+    DOMMatrix?: typeof DOMMatrix;
+    ImageData?: typeof ImageData;
+    Path2D?: typeof Path2D;
+  };
+
+  if (globalObject.DOMMatrix && globalObject.ImageData && globalObject.Path2D) return;
+
+  let canvas: typeof import("@napi-rs/canvas");
+  try {
+    canvas = await import("@napi-rs/canvas");
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "unknown error";
+    throw new Error(`PDF 렌더링 환경 초기화에 실패했습니다. @napi-rs/canvas를 불러올 수 없습니다. (${message})`);
+  }
+
+  if (!globalObject.DOMMatrix && canvas.DOMMatrix) {
+    globalObject.DOMMatrix = canvas.DOMMatrix as unknown as typeof DOMMatrix;
+  }
+  if (!globalObject.ImageData && canvas.ImageData) {
+    globalObject.ImageData = canvas.ImageData as unknown as typeof ImageData;
+  }
+  if (!globalObject.Path2D && canvas.Path2D) {
+    globalObject.Path2D = canvas.Path2D as unknown as typeof Path2D;
+  }
+
+  if (!globalObject.DOMMatrix || !globalObject.ImageData || !globalObject.Path2D) {
+    throw new Error("PDF 렌더링 환경 초기화에 실패했습니다. PDF 처리에 필요한 canvas API를 사용할 수 없습니다.");
+  }
+}
+
 function extractOcrText(payload: OcrChatCompletionResponse): string {
   return payload.choices?.[0]?.message?.content?.trim() ?? "";
 }
@@ -239,6 +271,7 @@ async function callPdfOcr(pageImages: string[]): Promise<string> {
 }
 
 async function pdfToText(file: File): Promise<string> {
+  await ensurePdfCanvasGlobals();
   const { PDFParse } = await import("pdf-parse");
   const arrayBuffer = await file.arrayBuffer();
   const parser = new PDFParse({ data: new Uint8Array(arrayBuffer) });
