@@ -13,6 +13,7 @@ afterEach(() => {
   vi.resetModules();
   vi.unmock("pdf-parse");
   vi.unmock("@napi-rs/canvas");
+  vi.unmock("pdfjs-dist/legacy/build/pdf.worker.mjs");
 });
 
 async function makeHwpxFile(): Promise<File> {
@@ -723,15 +724,20 @@ describe("/api/itinerary/parse", () => {
     vi.stubGlobal("DOMMatrix", undefined);
     vi.stubGlobal("ImageData", undefined);
     vi.stubGlobal("Path2D", undefined);
+    vi.stubGlobal("pdfjsWorker", undefined);
 
     class CanvasDOMMatrix {}
     class CanvasImageData {}
     class CanvasPath2D {}
+    class WorkerMessageHandler {}
 
     vi.doMock("@napi-rs/canvas", () => ({
       DOMMatrix: CanvasDOMMatrix,
       ImageData: CanvasImageData,
       Path2D: CanvasPath2D,
+    }));
+    vi.doMock("pdfjs-dist/legacy/build/pdf.worker.mjs", () => ({
+      WorkerMessageHandler,
     }));
 
     const getText = vi.fn(async () => ({
@@ -758,6 +764,9 @@ describe("/api/itinerary/parse", () => {
       expect(globalThis.DOMMatrix).toBe(CanvasDOMMatrix);
       expect(globalThis.ImageData).toBe(CanvasImageData);
       expect(globalThis.Path2D).toBe(CanvasPath2D);
+      expect((globalThis as typeof globalThis & { pdfjsWorker?: { WorkerMessageHandler?: unknown } }).pdfjsWorker?.WorkerMessageHandler).toBe(
+        WorkerMessageHandler,
+      );
       return {
         getText,
         getScreenshot,
