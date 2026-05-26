@@ -12,8 +12,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.resetModules();
   vi.unmock("pdf-parse");
+  vi.unmock("pdf-parse/worker");
   vi.unmock("@napi-rs/canvas");
-  vi.unmock("pdfjs-dist/legacy/build/pdf.worker.mjs");
 });
 
 async function makeHwpxFile(): Promise<File> {
@@ -718,26 +718,20 @@ describe("/api/itinerary/parse", () => {
     expect(itemText).not.toContain("3000 4 27 324000");
   });
 
-  it("initializes PDF canvas globals before loading the PDF parser", async () => {
+  it("initializes PDF canvas globals and configures the bundled PDF worker before loading the parser", async () => {
     process.env.OPENAI_API_KEY = "";
     vi.resetModules();
     vi.stubGlobal("DOMMatrix", undefined);
     vi.stubGlobal("ImageData", undefined);
     vi.stubGlobal("Path2D", undefined);
-    vi.stubGlobal("pdfjsWorker", undefined);
 
     class CanvasDOMMatrix {}
     class CanvasImageData {}
     class CanvasPath2D {}
-    class WorkerMessageHandler {}
-
     vi.doMock("@napi-rs/canvas", () => ({
       DOMMatrix: CanvasDOMMatrix,
       ImageData: CanvasImageData,
       Path2D: CanvasPath2D,
-    }));
-    vi.doMock("pdfjs-dist/legacy/build/pdf.worker.mjs", () => ({
-      WorkerMessageHandler,
     }));
 
     const getText = vi.fn(async () => ({
@@ -760,19 +754,17 @@ describe("/api/itinerary/parse", () => {
     }));
     const getScreenshot = vi.fn();
     const destroy = vi.fn(async () => undefined);
-    const PDFParse = vi.fn(() => {
+    const setWorker = vi.fn();
+    const PDFParse = Object.assign(vi.fn(() => {
       expect(globalThis.DOMMatrix).toBe(CanvasDOMMatrix);
       expect(globalThis.ImageData).toBe(CanvasImageData);
       expect(globalThis.Path2D).toBe(CanvasPath2D);
-      expect((globalThis as typeof globalThis & { pdfjsWorker?: { WorkerMessageHandler?: unknown } }).pdfjsWorker?.WorkerMessageHandler).toBe(
-        WorkerMessageHandler,
-      );
       return {
         getText,
         getScreenshot,
         destroy,
       };
-    });
+    }), { setWorker });
 
     vi.doMock("pdf-parse", () => ({ PDFParse }));
 
@@ -797,6 +789,7 @@ describe("/api/itinerary/parse", () => {
 
     expect(payload.error).toBeUndefined();
     expect(response.status).toBe(200);
+    expect(setWorker).toHaveBeenCalledWith(expect.stringMatching(/^data:text\/javascript;base64,/u));
     expect(PDFParse).toHaveBeenCalledTimes(1);
     expect(getText).toHaveBeenCalledTimes(1);
     expect(getScreenshot).not.toHaveBeenCalled();
@@ -817,14 +810,13 @@ describe("/api/itinerary/parse", () => {
       ],
     }));
     const destroy = vi.fn(async () => undefined);
+    const PDFParse = Object.assign(vi.fn(() => ({
+      getText,
+      getScreenshot,
+      destroy,
+    })), { setWorker: vi.fn() });
 
-    vi.doMock("pdf-parse", () => ({
-      PDFParse: vi.fn(() => ({
-        getText,
-        getScreenshot,
-        destroy,
-      })),
-    }));
+    vi.doMock("pdf-parse", () => ({ PDFParse }));
 
     const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body)) as {

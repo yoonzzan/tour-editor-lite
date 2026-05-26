@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import * as ExcelJS from "exceljs";
 import JSZip from "jszip";
 import type * as CfbType from "cfb";
@@ -16,6 +18,8 @@ const PDF_OCR_MAX_PAGES = 6;
 const PDF_OCR_IMAGE_WIDTH = 1600;
 const PDF_TEXT_MIN_CHARS = 80;
 const MAX_SPREADSHEET_SHEETS = 8;
+const requireFromRoute = createRequire(import.meta.url);
+let pdfWorkerDataUrlPromise: Promise<string> | null = null;
 
 type OcrMessageContent =
   | { type: "text"; text: string }
@@ -411,9 +415,6 @@ async function ensurePdfCanvasGlobals(): Promise<void> {
     DOMMatrix?: typeof DOMMatrix;
     ImageData?: typeof ImageData;
     Path2D?: typeof Path2D;
-    pdfjsWorker?: {
-      WorkerMessageHandler?: unknown;
-    };
   };
 
   if (!globalObject.DOMMatrix || !globalObject.ImageData || !globalObject.Path2D) {
@@ -439,21 +440,25 @@ async function ensurePdfCanvasGlobals(): Promise<void> {
       throw new Error("PDF 렌더링 환경 초기화에 실패했습니다. PDF 처리에 필요한 canvas API를 사용할 수 없습니다.");
     }
   }
+}
 
-  if (!globalObject.pdfjsWorker?.WorkerMessageHandler) {
-    let worker: typeof import("pdfjs-dist/legacy/build/pdf.worker.mjs");
-    try {
-      worker = await import("pdfjs-dist/legacy/build/pdf.worker.mjs");
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "unknown error";
-      throw new Error(`PDF worker 초기화에 실패했습니다. pdf.worker.mjs를 불러올 수 없습니다. (${message})`);
-    }
+async function configurePdfWorker(PDFParse: typeof import("pdf-parse").PDFParse): Promise<void> {
+  PDFParse.setWorker(await getPdfWorkerDataUrl());
+}
 
-    if (!worker.WorkerMessageHandler) {
-      throw new Error("PDF worker 초기화에 실패했습니다. WorkerMessageHandler를 사용할 수 없습니다.");
-    }
+function getPdfWorkerDataUrl(): Promise<string> {
+  pdfWorkerDataUrlPromise ??= loadPdfWorkerDataUrl();
+  return pdfWorkerDataUrlPromise;
+}
 
-    globalObject.pdfjsWorker = worker;
+async function loadPdfWorkerDataUrl(): Promise<string> {
+  try {
+    const workerPath = requireFromRoute.resolve("pdfjs-dist/legacy/build/pdf.worker.min.mjs");
+    const workerSource = await readFile(workerPath);
+    return `data:text/javascript;base64,${workerSource.toString("base64")}`;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "unknown error";
+    throw new Error(`PDF worker 초기화에 실패했습니다. pdf.worker.min.mjs를 data URL로 준비할 수 없습니다. (${message})`);
   }
 }
 
@@ -526,6 +531,7 @@ async function callPdfOcr(pageImages: string[]): Promise<string> {
 async function pdfToText(file: File): Promise<string> {
   await ensurePdfCanvasGlobals();
   const { PDFParse } = await import("pdf-parse");
+  await configurePdfWorker(PDFParse);
   const arrayBuffer = await file.arrayBuffer();
   const parser = new PDFParse({ data: new Uint8Array(arrayBuffer) });
   try {
