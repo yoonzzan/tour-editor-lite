@@ -1,8 +1,17 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { parseDirectInputItineraryWithDiagnostics } from "@/lib/itinerary/directInputParser";
 import type { ItineraryData, MealSlot } from "@/types";
+
+vi.hoisted(() => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-05-21T00:00:00+09:00"));
+});
+
+afterAll(() => {
+  vi.useRealTimers();
+});
 
 interface DirectInputGoldenCase {
   name: string;

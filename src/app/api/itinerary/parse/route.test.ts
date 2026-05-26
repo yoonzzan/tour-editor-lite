@@ -9,8 +9,10 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   vi.resetModules();
   vi.unmock("pdf-parse");
+  vi.unmock("@napi-rs/canvas");
 });
 
 async function makeHwpxFile(): Promise<File> {
@@ -713,6 +715,85 @@ describe("/api/itinerary/parse", () => {
     expect(itemText).toContain("나리타 공항 도착");
     expect(itemText).not.toContain("나리타 공항 도착 후 전용차량 탑승 나리타 공항 도착 후 전용차량 탑승");
     expect(itemText).not.toContain("3000 4 27 324000");
+  });
+
+  it("initializes PDF canvas globals before loading the PDF parser", async () => {
+    process.env.OPENAI_API_KEY = "";
+    vi.resetModules();
+    vi.stubGlobal("DOMMatrix", undefined);
+    vi.stubGlobal("ImageData", undefined);
+    vi.stubGlobal("Path2D", undefined);
+
+    class CanvasDOMMatrix {}
+    class CanvasImageData {}
+    class CanvasPath2D {}
+
+    vi.doMock("@napi-rs/canvas", () => ({
+      DOMMatrix: CanvasDOMMatrix,
+      ImageData: CanvasImageData,
+      Path2D: CanvasPath2D,
+    }));
+
+    const getText = vi.fn(async () => ({
+      text: [
+        "상품명: 북해도 3박4일",
+        "기간: 2026-07-13 ~ 2026-07-16",
+        "인원: 성인 30",
+        "1일차 2026-07-13",
+        "- 인천공항 출발",
+        "- 신치토세 공항 도착",
+        "- 석식 현지식",
+        "- 삿포로 호텔 숙박",
+        "2일차 2026-07-14",
+        "- 호텔 조식",
+        "- 비에이 관광",
+        "- 중식 현지식",
+        "- 후라노 관광",
+        "- 삿포로 호텔 숙박",
+      ].join("\n"),
+    }));
+    const getScreenshot = vi.fn();
+    const destroy = vi.fn(async () => undefined);
+    const PDFParse = vi.fn(() => {
+      expect(globalThis.DOMMatrix).toBe(CanvasDOMMatrix);
+      expect(globalThis.ImageData).toBe(CanvasImageData);
+      expect(globalThis.Path2D).toBe(CanvasPath2D);
+      return {
+        getText,
+        getScreenshot,
+        destroy,
+      };
+    });
+
+    vi.doMock("pdf-parse", () => ({ PDFParse }));
+
+    const { POST } = await import("./route");
+    const formData = new FormData();
+    formData.append("file", new File(["fake pdf"], "hokkaido.pdf", { type: "application/pdf" }));
+
+    const request = {
+      headers: new Headers({ "x-access-code": "test-code" }),
+      formData: async () => formData,
+    } as unknown as NextRequest;
+
+    const response = await POST(request);
+    const payload = (await response.json()) as {
+      itinerary?: {
+        days?: Array<{
+          items?: Array<{ content?: string }>;
+        }>;
+      };
+      error?: string;
+    };
+
+    expect(payload.error).toBeUndefined();
+    expect(response.status).toBe(200);
+    expect(PDFParse).toHaveBeenCalledTimes(1);
+    expect(getText).toHaveBeenCalledTimes(1);
+    expect(getScreenshot).not.toHaveBeenCalled();
+    expect(destroy).toHaveBeenCalledTimes(1);
+    const contents = payload.itinerary?.days?.flatMap((day) => day.items?.map((item) => item.content ?? "") ?? []) ?? [];
+    expect(contents).toContain("신치토세 공항 도착");
   });
 
   it("uses OCR fallback when uploaded PDF has no extractable text", async () => {
