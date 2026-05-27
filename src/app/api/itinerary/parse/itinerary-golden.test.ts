@@ -32,18 +32,31 @@ const INLINE_EXPECTATIONS: Array<{ marker: string; expected: GoldenExpected }> =
     marker: "0417스페인 9일",
     expected: {
       dayCount: 9,
+      period: { start: "2026-04-17", end: "2026-04-25" },
+      dayDates: {
+        1: "2026-04-17",
+        9: "2026-04-25",
+      },
+      requiredFlight: {
+        departureIncludes: ["TW407", "인천 출발", "바르셀로나 도착"],
+        arrivalIncludes: ["TW408", "바르셀로나 출발", "인천 도착"],
+      },
       requiredContents: [
         "몬세라트 수도원",
         "Mercado de San Miguel",
+        "프라도 미술관",
         "알함브라",
         "Metropol Parasol",
         "누에보 다리",
         "사보르 아 말라가",
         "사그라다 파밀리아",
+        "기내 숙박",
         "인천 도착",
       ],
       requiredHotels: ["4성급 호텔"],
       forbiddenContents: ["참고사항", "상기 일정", "환율", "TEMPOR"],
+      forbiddenHotels: ["출국 수속", "몬세라트 바르셀로나", "마드리드", "그라나다", "세비야", "론다", "방문기관", "프라도 미술관", "유대인 지구"],
+      forbiddenNotes: ["1일차", "2일차", "3일차", "4일차", "5일차", "6일차", "7일차", "8일차", "9일차"],
     },
   },
   {
@@ -133,12 +146,23 @@ const NOISE_PATTERNS = [
 interface GoldenExpected {
   dayCount?: number;
   minQualityScore?: number;
+  period?: {
+    start: string;
+    end: string;
+  };
+  dayDates?: Record<number, string>;
+  requiredFlight?: {
+    departureIncludes?: string[];
+    arrivalIncludes?: string[];
+  };
   requiredContents?: string[];
   requiredMeals?: Array<{
     slot: MealSlot;
     valueIncludes: string;
   }>;
   requiredHotels?: string[];
+  forbiddenHotels?: string[];
+  forbiddenNotes?: string[];
   forbiddenContents?: string[];
   forbiddenVehicleContents?: string[];
 }
@@ -208,9 +232,23 @@ function loadExpected(testCase: GoldenCase): GoldenExpected | null {
   return {
     ...fileExpected,
     ...inlineExpected,
+    period: inlineExpected.period ?? fileExpected.period,
+    dayDates: { ...(fileExpected.dayDates ?? {}), ...(inlineExpected.dayDates ?? {}) },
+    requiredFlight: {
+      departureIncludes: [
+        ...(fileExpected.requiredFlight?.departureIncludes ?? []),
+        ...(inlineExpected.requiredFlight?.departureIncludes ?? []),
+      ],
+      arrivalIncludes: [
+        ...(fileExpected.requiredFlight?.arrivalIncludes ?? []),
+        ...(inlineExpected.requiredFlight?.arrivalIncludes ?? []),
+      ],
+    },
     requiredContents: [...(fileExpected.requiredContents ?? []), ...(inlineExpected.requiredContents ?? [])],
     requiredMeals: [...(fileExpected.requiredMeals ?? []), ...(inlineExpected.requiredMeals ?? [])],
     requiredHotels: [...(fileExpected.requiredHotels ?? []), ...(inlineExpected.requiredHotels ?? [])],
+    forbiddenHotels: [...(fileExpected.forbiddenHotels ?? []), ...(inlineExpected.forbiddenHotels ?? [])],
+    forbiddenNotes: [...(fileExpected.forbiddenNotes ?? []), ...(inlineExpected.forbiddenNotes ?? [])],
     forbiddenContents: [...(fileExpected.forbiddenContents ?? []), ...(inlineExpected.forbiddenContents ?? [])],
     forbiddenVehicleContents: [
       ...(fileExpected.forbiddenVehicleContents ?? []),
@@ -302,8 +340,33 @@ describe("itinerary golden fixtures", () => {
     if (expected?.dayCount !== undefined) {
       expect(itinerary.days, testCase.name).toHaveLength(expected.dayCount);
     }
+    if (expected?.period) {
+      expect(itinerary.overview.travelPeriod.start, `${testCase.name} period start`).toBe(expected.period.start);
+      expect(itinerary.overview.travelPeriod.end, `${testCase.name} period end`).toBe(expected.period.end);
+    }
+    for (const [dayNoText, date] of Object.entries(expected?.dayDates ?? {})) {
+      const dayNo = Number(dayNoText);
+      const day = itinerary.days.find((candidate) => candidate.dayNo === dayNo);
+      expect(day?.date, `${testCase.name} day ${dayNo} date`).toBe(date);
+    }
+    for (const required of expected?.requiredFlight?.departureIncludes ?? []) {
+      expect(itinerary.basics.flight.departure.includes(required), `${testCase.name} departure ${required}`).toBe(true);
+    }
+    for (const required of expected?.requiredFlight?.arrivalIncludes ?? []) {
+      expect(itinerary.basics.flight.arrival.includes(required), `${testCase.name} arrival ${required}`).toBe(true);
+    }
 
     const itemTexts = allItemTexts(itinerary);
+    const hotelTexts = [
+      itinerary.basics.accommodation.hotel,
+      itinerary.basics.accommodation.grade,
+      itinerary.basics.accommodation.occupancy,
+      ...itinerary.days.flatMap((day) =>
+        day.items
+          .filter((item) => item.type === "ACCOMMODATION")
+          .flatMap((item) => [item.content, item.hotel ?? ""]),
+      ),
+    ].filter((value) => value.trim().length > 0);
     const forbiddenContents = expected?.forbiddenContents ?? [];
     for (const pattern of NOISE_PATTERNS) {
       expect(itemTexts.some((value) => pattern.test(value)), testCase.name).toBe(false);
@@ -313,6 +376,12 @@ describe("itinerary golden fixtures", () => {
     }
     for (const forbidden of expected?.forbiddenVehicleContents ?? []) {
       expect(itinerary.basics.flight.localVehicle.includes(forbidden), `${testCase.name} vehicle ${forbidden}`).toBe(false);
+    }
+    for (const forbidden of expected?.forbiddenHotels ?? []) {
+      expect(includesText(hotelTexts, forbidden), `${testCase.name} hotel forbidden ${forbidden}`).toBe(false);
+    }
+    for (const forbidden of expected?.forbiddenNotes ?? []) {
+      expect(itinerary.basics.notes.includes(forbidden), `${testCase.name} notes forbidden ${forbidden}`).toBe(false);
     }
     for (const required of expected?.requiredContents ?? []) {
       expect(includesText(itemTexts, required), `${testCase.name} required ${required}`).toBe(true);

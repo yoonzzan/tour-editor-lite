@@ -7,6 +7,7 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { config } from "@/lib/config";
 import { requireConverterAccess } from "@/lib/converter/access";
+import { currentYearInKorea } from "@/lib/date/korea";
 import { parseItineraryWithDiagnostics, type ItineraryParseResult } from "@/lib/itinerary/aiParser";
 import { parseDirectInputItineraryWithDiagnostics } from "@/lib/itinerary/directInputParser";
 import { spreadsheetRowsToText } from "@/lib/itinerary/spreadsheetText";
@@ -275,7 +276,7 @@ function pdfScheduleItemType(line: string): "이동" | "관광" | "숙박" | "�
   if (/(?:출발|도착|이동|공항|수속|집결|체크아웃|가이드\s*미팅|전용차량|전용버스|\b[A-Z]{2}\s?\d{2,4}\b)/iu.test(line)) {
     return "이동";
   }
-  if (/(?:관광|탐방|방문|견학|산책|관람|공원|수족관|성|광장|대성당|박물관|쇼|수도원|운하|폭포|연못|라벤더|국립공원|사옥|생산공장|본사|캠퍼스|자유일정|쇼핑)/u.test(line)) {
+  if (/(?:관광|탐방|방문|견학|산책|관람|공원|수족관|성|광장|대성당|박물관|궁전|쇼|수도원|운하|폭포|연못|라벤더|국립공원|사옥|생산공장|본사|캠퍼스|자유일정|쇼핑)/u.test(line)) {
     return "관광";
   }
   return "기타";
@@ -302,6 +303,17 @@ function normalizePdfScheduleLine(line: string): string {
     .trim();
 }
 
+function parsePdfMonthDayDateLine(line: string): { date: string; rest: string } | null {
+  const match = /^\(?\s*(0?[1-9]|1[0-2])[./]\s*(3[01]|[12]\d|0?[1-9])\.?\s*\)?(?:\s*\([^)]+\))?\s*(.*)$/u.exec(line);
+  if (!match?.[1] || !match[2]) return null;
+  const month = match[1].padStart(2, "0");
+  const day = match[2].padStart(2, "0");
+  return {
+    date: `${currentYearInKorea()}-${month}-${day}`,
+    rest: cleanPdfLine(match[3] ?? ""),
+  };
+}
+
 function stripPdfLeadingScheduleColumns(line: string): string {
   const parts = line.split("|").map((part) => repairPdfBrokenWords(part)).filter(Boolean);
   if (parts.length < 2) return line;
@@ -315,6 +327,68 @@ function stripPdfLeadingScheduleColumns(line: string): string {
   return line;
 }
 
+function cityBeforePdfFlightEvent(line: string, event: "출발" | "도착"): string {
+  const beforeEvent = repairPdfBrokenWords(line).split(event)[0] ?? "";
+  const text = beforeEvent
+    .replace(/\b\d{1,2}[:;]\d{2}(?:\(\+1\))?\b/gu, " ")
+    .replace(/[^\p{L}\s]/gu, " ")
+    .replace(/\s{2,}/gu, " ")
+    .trim();
+  const tokens = text.split(/\s+/u).filter(Boolean);
+  return tokens[tokens.length - 1] ?? "";
+}
+
+function extractPdfFlightSummaries(sourceLines: string[]): { departure: string; arrival: string } {
+  const internationalFlightPattern = /\b((?:OZ|KE|TW|AY)\s?\d{2,4})\b/iu;
+  let departure = "";
+  let arrival = "";
+
+  for (let index = 0; index < sourceLines.length; index += 1) {
+    const line = repairPdfBrokenWords(sourceLines[index] ?? "");
+    const flightNo = internationalFlightPattern.exec(line)?.[1]?.replace(/\s+/gu, "");
+    if (!flightNo) continue;
+
+    const windowLines = sourceLines
+      .slice(index, index + 4)
+      .map((sourceLine) => repairPdfBrokenWords(sourceLine));
+    const joined = windowLines.join(" ");
+    const departureLine = windowLines.find((candidate) => candidate.includes("출발")) ?? "";
+    const arrivalLine = windowLines.find((candidate) => candidate.includes("도착")) ?? "";
+    const times = Array.from(joined.matchAll(/\b\d{1,2}[:;]\d{2}(?:\(\+1\))?\b/gu))
+      .map((match) => match[0].replace(";", ":"));
+    const departureCity = cityBeforePdfFlightEvent(departureLine, "출발");
+    const arrivalCity = cityBeforePdfFlightEvent(arrivalLine, "도착");
+    const summary = [
+      flightNo,
+      departureCity && ` ${departureCity} 출발`,
+      times[0] && ` ${times[0]}`,
+      arrivalCity && ` / ${arrivalCity} 도착`,
+      times[1] && ` ${times[1]}`,
+    ].filter(Boolean).join("").trim();
+    if (!summary) continue;
+
+    if (!departure && departureCity === "인천") {
+      departure = summary;
+    } else if (!arrival && arrivalCity === "인천") {
+      arrival = summary;
+    }
+  }
+
+  return { departure, arrival };
+}
+
+function isPdfContinuationScheduleLine(content: string): boolean {
+  return /^\([^)]{2,}\)$/u.test(content)
+    || /^(?:수,|당,|의\s*묘|지구|등\s*탐방|카사|탈루냐|광장,|구릉\s*지구|알바이신\s*지구|유대인\s*거리|누에바\s*광장|히랄다\s*탑|세계\s*3대|대성당|산또\s*또메)/u.test(content);
+}
+
+function stripPdfVisitPrefix(content: string): string {
+  return content
+    .replace(/^[가-힣A-Za-z\s]+(?=■?\s*방문기관)/u, "")
+    .replace(/^■\s*/u, "")
+    .trim();
+}
+
 function normalizePdfExtractedText(text: string): string {
   const sourceLines = stripPdfPageMarkers(text)
     .split("\n")
@@ -322,6 +396,7 @@ function normalizePdfExtractedText(text: string): string {
     .filter(Boolean);
   const output: string[] = [];
   const seenByDay = new Map<number, Set<string>>();
+  const flightSummaries = extractPdfFlightSummaries(sourceLines);
   let currentDayNo = 0;
   let trailerStarted = false;
   let pageInterludeStarted = false;
@@ -332,6 +407,44 @@ function normalizePdfExtractedText(text: string): string {
     seen.add(line);
     seenByDay.set(dayNo, seen);
     output.push(line);
+  };
+
+  const pushPdfScheduleItem = (dayNo: number, type: "이동" | "관광" | "숙박" | "기타", content: string): void => {
+    const value = cleanPdfLine(content);
+    if (!value) return;
+    const previous = output[output.length - 1] ?? "";
+    if (
+      type === "관광"
+      && previous.startsWith("- 관광 | ")
+      && (previous.endsWith(":") || isPdfContinuationScheduleLine(value))
+    ) {
+      output[output.length - 1] = `${previous} ${value}`;
+      return;
+    }
+    pushUnique(dayNo, `- ${type} | ${value}`);
+  };
+
+  const pushSplitPdfScheduleItems = (dayNo: number, contentLine: string): boolean => {
+    const leadingHotel = /^(\d?\s*성급\s*호텔)(?:\s+(.+))?$/u.exec(contentLine);
+    if (leadingHotel?.[1]) {
+      pushPdfScheduleItem(dayNo, "숙박", leadingHotel[1]);
+      const suffix = stripPdfVisitPrefix(leadingHotel[2] ?? "");
+      if (suffix && /(?:방문|관광|탐방|견학|기관)/u.test(suffix)) {
+        pushPdfScheduleItem(dayNo, "관광", suffix);
+      }
+      return true;
+    }
+
+    const trailingHotel = /^(.+?)\s+(\d?\s*성급\s*호텔|기내\s*숙박)$/u.exec(contentLine);
+    if (!trailingHotel?.[1] || !trailingHotel[2]) return false;
+    const prefix = trailingHotel[1].trim();
+    const accommodation = trailingHotel[2].trim();
+    if (prefix && hasPdfScheduleSignal(prefix)) {
+      const prefixType = pdfScheduleItemType(prefix);
+      pushPdfScheduleItem(dayNo, prefixType === "숙박" ? "기타" : prefixType, prefix);
+    }
+    pushPdfScheduleItem(dayNo, "숙박", accommodation);
+    return true;
   };
 
   const processScheduleLine = (rawLine: string): void => {
@@ -364,9 +477,14 @@ function normalizePdfExtractedText(text: string): string {
       return;
     }
 
+    if (pushSplitPdfScheduleItems(currentDayNo, contentLine)) return;
+
     const type = pdfScheduleItemType(contentLine);
-    pushUnique(currentDayNo, `- ${type} | ${contentLine}`);
+    pushPdfScheduleItem(currentDayNo, type, contentLine);
   };
+
+  if (flightSummaries.departure) output.push(`항공 출발: ${flightSummaries.departure}`);
+  if (flightSummaries.arrival) output.push(`항공 귀국: ${flightSummaries.arrival}`);
 
   for (const rawLine of sourceLines) {
     const line = repairPdfBrokenWords(rawLine);
@@ -378,6 +496,12 @@ function normalizePdfExtractedText(text: string): string {
       output.push(`*${currentDayNo}일차*`);
       const rest = dayMatch[2]?.trim();
       if (rest) processScheduleLine(rest);
+      continue;
+    }
+    const pdfDate = currentDayNo > 0 ? parsePdfMonthDayDateLine(line) : null;
+    if (pdfDate) {
+      pushUnique(currentDayNo, pdfDate.date);
+      if (pdfDate.rest) processScheduleLine(pdfDate.rest);
       continue;
     }
     if (/\.xlsx$/iu.test(line)) {

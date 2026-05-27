@@ -2157,7 +2157,9 @@ function extractMetaFromRaw(
   const noteLines = lines
     .map((line) => cleanText(line))
     .filter((line) => /^\*/u.test(line))
-    .map((line) => line.replace(/^\*\s*/u, ""));
+    .map((line) => line.replace(/^\*\s*/u, "").replace(/\s*\*+$/u, "").trim())
+    .filter((line) => !/^(?:제\s*)?\d{1,2}\s*일차$/u.test(line))
+    .filter((line) => !/^(?:상품\s*정보|상품명|방문도시|기간|항공\/교통|항공\s*출발|항공\s*귀국|차량|숙박|숙박호텔|호텔등급|포함\/불포함|포함사항|불포함사항|선택관광|쇼핑센터\s*방문\s*수|상세\s*일정|유의사항)$/u.test(line));
   if (noteLines.length > 0) {
     notes = [notes, ...noteLines].filter(Boolean).join("\n");
   }
