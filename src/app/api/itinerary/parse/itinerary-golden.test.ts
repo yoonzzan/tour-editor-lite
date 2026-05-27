@@ -41,6 +41,12 @@ const INLINE_EXPECTATIONS: Array<{ marker: string; expected: GoldenExpected }> =
         departureIncludes: ["TW407", "인천 출발", "바르셀로나 도착"],
         arrivalIncludes: ["TW408", "바르셀로나 출발", "인천 도착"],
       },
+      requiredItemFields: [
+        { dayNo: 1, contentIncludes: "고흥출발", region: "고흥", transport: "전용차량", time: "08:00" },
+        { dayNo: 2, contentIncludes: "몬세라트로 이동", region: "몬세라트", transport: "전용차량", time: "09:00" },
+        { dayNo: 8, contentIncludes: "바르셀로나 출발", region: "바르셀로나", transport: "TW408", time: "21:00" },
+        { dayNo: 9, contentIncludes: "인천 도착", region: "인천", time: "16:25" },
+      ],
       requiredContents: [
         "몬세라트 수도원",
         "Mercado de San Miguel",
@@ -155,6 +161,13 @@ interface GoldenExpected {
     departureIncludes?: string[];
     arrivalIncludes?: string[];
   };
+  requiredItemFields?: Array<{
+    dayNo?: number;
+    contentIncludes: string;
+    region?: string;
+    transport?: string;
+    time?: string;
+  }>;
   requiredContents?: string[];
   requiredMeals?: Array<{
     slot: MealSlot;
@@ -244,6 +257,10 @@ function loadExpected(testCase: GoldenCase): GoldenExpected | null {
         ...(inlineExpected.requiredFlight?.arrivalIncludes ?? []),
       ],
     },
+    requiredItemFields: [
+      ...(fileExpected.requiredItemFields ?? []),
+      ...(inlineExpected.requiredItemFields ?? []),
+    ],
     requiredContents: [...(fileExpected.requiredContents ?? []), ...(inlineExpected.requiredContents ?? [])],
     requiredMeals: [...(fileExpected.requiredMeals ?? []), ...(inlineExpected.requiredMeals ?? [])],
     requiredHotels: [...(fileExpected.requiredHotels ?? []), ...(inlineExpected.requiredHotels ?? [])],
@@ -354,6 +371,22 @@ describe("itinerary golden fixtures", () => {
     }
     for (const required of expected?.requiredFlight?.arrivalIncludes ?? []) {
       expect(itinerary.basics.flight.arrival.includes(required), `${testCase.name} arrival ${required}`).toBe(true);
+    }
+    for (const required of expected?.requiredItemFields ?? []) {
+      const items = itinerary.days
+        .filter((day) => required.dayNo === undefined || day.dayNo === required.dayNo)
+        .flatMap((day) => day.items);
+      const item = items.find((candidate) => candidate.content.includes(required.contentIncludes));
+      expect(item, `${testCase.name} item ${required.contentIncludes}`).toBeDefined();
+      if (required.region !== undefined) {
+        expect(item?.region, `${testCase.name} item ${required.contentIncludes} region`).toBe(required.region);
+      }
+      if (required.transport !== undefined) {
+        expect(item?.transport, `${testCase.name} item ${required.contentIncludes} transport`).toBe(required.transport);
+      }
+      if (required.time !== undefined) {
+        expect(item?.time, `${testCase.name} item ${required.contentIncludes} time`).toBe(required.time);
+      }
     }
 
     const itemTexts = allItemTexts(itinerary);

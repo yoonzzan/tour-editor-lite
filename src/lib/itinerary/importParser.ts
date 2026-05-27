@@ -146,9 +146,67 @@ function normalizeMealContent(content: string, detail: string | undefined, slot:
   return "석식";
 }
 
+function isImportTransport(value: string): boolean {
+  const text = sanitizeText(value);
+  if (!text || text.length > 20) return false;
+  if (/\b(?:OZ|KE|LJ|BX|TW|ZE|RS|7C)\d{2,4}\b/u.test(text)) return true;
+  return /^(?:전용버스|버스|항공|항공편|차량|택시|지하철|열차|페리|도보|기내)$/u.test(text);
+}
+
+function extractImportTime(value: string): string {
+  const matched = /\b([01]?\d|2[0-3]):([0-5]\d)\b/u.exec(value);
+  if (!matched?.[1] || !matched[2]) return "";
+  return `${matched[1].padStart(2, "0")}:${matched[2]}`;
+}
+
+function itemTypeFromLabel(label: string): ScheduleItemType | undefined {
+  if (label === "이동") return "TRANSFER";
+  if (label === "관광") return "SIGHTSEEING";
+  if (label === "식사") return "MEAL";
+  if (label === "숙박") return "ACCOMMODATION";
+  if (label === "기타") return "OTHER";
+  return undefined;
+}
+
+function splitColumnScheduleItem(value: string): {
+  content: string;
+  region?: string;
+  transport?: string;
+  time?: string;
+  type?: ScheduleItemType;
+} | undefined {
+  const columns = value
+    .split("|")
+    .map((entry) => sanitizeText(entry))
+    .filter(Boolean);
+  if (columns.length < 3) return undefined;
+
+  const labelType = itemTypeFromLabel(columns[0] ?? "");
+  const offset = labelType ? 1 : 0;
+  if (columns.length - offset < 3) return undefined;
+  if (!isImportTransport(columns[offset + 1] ?? "")) return undefined;
+
+  const region = columns[offset] ?? "";
+  const transport = columns[offset + 1] ?? "";
+  const remaining = columns.slice(offset + 2);
+  const explicitTime = extractImportTime(remaining[0] ?? "");
+  const contentSource = explicitTime ? remaining.slice(1) : remaining;
+  const content = sanitizeText(contentSource.join(" | "));
+  if (!content) return undefined;
+
+  return {
+    content,
+    ...(region ? { region } : {}),
+    ...(transport ? { transport } : {}),
+    ...(explicitTime ? { time: explicitTime } : {}),
+    ...(labelType ? { type: labelType } : {}),
+  };
+}
+
 function buildLineItem(content: string, _dayNo: number, _seq: number, detail?: string): ScheduleItem {
-  const split = detail ? { content, detail } : splitStructuredScheduleContent(content);
-  const itemType = normalizeItemType(split.content);
+  const columnItem = detail ? undefined : splitColumnScheduleItem(content);
+  const split = columnItem ? { content: columnItem.content } : detail ? { content, detail } : splitStructuredScheduleContent(content);
+  const itemType = columnItem?.type ?? normalizeItemType(split.content);
   const mealSlot = itemType === "MEAL" ? inferMealSlot([split.content, split.detail].filter(Boolean).join(" ")) : undefined;
   const mealContent = mealSlot ? normalizeMealContent(split.content, split.detail, mealSlot) : "";
   return {
@@ -157,8 +215,9 @@ function buildLineItem(content: string, _dayNo: number, _seq: number, detail?: s
     content: mealSlot ? mealContent : split.content,
     ...(!mealSlot && split.detail ? { detail: split.detail } : {}),
     ...(mealSlot ? { mealSlot, meal: { [mealSlot]: mealContent } } : {}),
-    time: "",
-    region: "",
+    time: columnItem?.time ?? "",
+    region: columnItem?.region ?? "",
+    ...(columnItem?.transport ? { transport: columnItem.transport } : {}),
   };
 }
 

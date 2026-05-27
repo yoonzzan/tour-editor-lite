@@ -1404,6 +1404,40 @@ function parsePipeColumns(text: string): {
     };
   }
 
+  if (
+    values.length >= 4 &&
+    /^(?:이동|관광|식사|숙박|기타)$/u.test(values[0] ?? "") &&
+    isLikelyTransport(values[2] ?? "")
+  ) {
+    let content = cleanText(values.slice(3).join(" | "));
+    const time = extractTimeToken(content);
+    if (time) {
+      content = cleanText(content.replace(/\b([01]?\d|2[0-3]):([0-5]\d)\b/u, ""));
+    }
+    return {
+      ...(dayNo !== undefined ? { dayNo } : {}),
+      region: values[1] ?? "",
+      transport: values[2] ?? "",
+      ...(time ? { time } : {}),
+      ...(content ? { content } : {}),
+    };
+  }
+
+  if (values.length >= 3 && isLikelyTransport(values[1] ?? "")) {
+    let content = cleanText(values.slice(2).join(" | "));
+    const time = extractTimeToken(content);
+    if (time) {
+      content = cleanText(content.replace(/\b([01]?\d|2[0-3]):([0-5]\d)\b/u, ""));
+    }
+    return {
+      ...(dayNo !== undefined ? { dayNo } : {}),
+      region: values[0] ?? "",
+      transport: values[1] ?? "",
+      ...(time ? { time } : {}),
+      ...(content ? { content } : {}),
+    };
+  }
+
   const transportCandidates = values
     .map((value, index) => ({ value, index }))
     .filter(({ value }) => isLikelyTransport(value));
@@ -1456,6 +1490,68 @@ function parsePipeColumns(text: string): {
     ...(transport ? { transport } : {}),
     ...(time ? { time } : {}),
     ...(detail ? { content: detail } : {}),
+  };
+}
+
+function normalizeEmbeddedColumnItem(item: ScheduleItem): ScheduleItem {
+  const parsed = parseEmbeddedColumnContent(item.content) ?? parsePipeColumns(item.content);
+  const content = cleanText(parsed.content);
+  if (!content || content === item.content) return item;
+  if (!parsed.region && !parsed.transport && !parsed.time) return item;
+
+  return {
+    ...item,
+    content,
+    ...(parsed.region || item.region ? { region: parsed.region || item.region } : {}),
+    ...(parsed.transport || item.transport ? { transport: parsed.transport || item.transport } : {}),
+    ...(parsed.time || item.time ? { time: parsed.time || item.time } : {}),
+  };
+}
+
+function isEmbeddedTransportColumn(value: string): boolean {
+  const text = cleanText(value);
+  if (!text || text.length > 20) return false;
+  if (/\b(?:OZ|KE|LJ|BX|TW|ZE|RS|7C)\d{2,4}\b/u.test(text)) return true;
+  return /^(?:전용버스|버스|항공|항공편|차량|전용차량|택시|지하철|열차|페리|도보|기내)$/u.test(text);
+}
+
+function parseEmbeddedColumnContent(text: string): {
+  region?: string;
+  transport?: string;
+  time?: string;
+  content?: string;
+} | undefined {
+  const columns = text
+    .split("|")
+    .map((column) => cleanText(column))
+    .filter(Boolean);
+  if (columns.length < 3) return undefined;
+
+  const offset = /^(?:이동|관광|식사|숙박|기타)$/u.test(columns[0] ?? "") ? 1 : 0;
+  if (columns.length - offset < 3) return undefined;
+  const transport = columns[offset + 1] ?? "";
+  if (!isEmbeddedTransportColumn(transport)) return undefined;
+
+  const tail = columns.slice(offset + 2);
+  const time = extractTimeToken(tail[0] ?? "");
+  const content = cleanText((time ? tail.slice(1) : tail).join(" | "));
+  if (!content) return undefined;
+
+  return {
+    region: columns[offset] ?? "",
+    transport,
+    ...(time ? { time } : {}),
+    content,
+  };
+}
+
+function normalizeEmbeddedColumnItems(data: ItineraryData): ItineraryData {
+  return {
+    ...data,
+    days: data.days.map((day) => ({
+      ...day,
+      items: day.items.map(normalizeEmbeddedColumnItem),
+    })),
   };
 }
 
@@ -1864,13 +1960,14 @@ function withDiagnosticsQuality(
   selectedCandidate: ItineraryParserCandidate,
   candidateScores: ItineraryCandidateScore[],
 ): ItineraryParseResult {
+  const normalizedItinerary = normalizeEmbeddedColumnItems(itinerary);
   const selectedScore =
     candidateScores.find((score) => score.candidate === selectedCandidate) ??
-    scoreParsedItinerary(selectedCandidate, itinerary, rawText);
+    scoreParsedItinerary(selectedCandidate, normalizedItinerary, rawText);
   const warnings = buildParserWarnings(diagnostics.source, selectedScore, rawText, diagnostics.aiError);
 
   return {
-    itinerary,
+    itinerary: normalizedItinerary,
     diagnostics: {
       ...diagnostics,
       selectedCandidate,
@@ -2914,8 +3011,19 @@ function directTypedScheduleItem(line: string): ScheduleItem | null {
   let transport = "";
   let time = "";
   const contentSegments: string[] = [];
+  const remainingSegments = [...segments];
 
-  for (const segment of segments) {
+  if (
+    remainingSegments.length >= 3 &&
+    !remainingSegments[0]?.includes("=") &&
+    !remainingSegments[1]?.includes("=") &&
+    isLikelyTransport(remainingSegments[1] ?? "")
+  ) {
+    region = cleanText(remainingSegments.shift() ?? "");
+    transport = cleanText(remainingSegments.shift() ?? "");
+  }
+
+  for (const segment of remainingSegments) {
     const regionValue = /^(?:지역|도시|region)\s*=\s*(.+)$/iu.exec(segment)?.[1];
     if (regionValue) {
       region = cleanText(regionValue);

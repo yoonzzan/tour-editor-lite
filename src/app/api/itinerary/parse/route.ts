@@ -178,6 +178,13 @@ function cleanPdfLine(line: string): string {
     .trim();
 }
 
+function cleanPdfColumnLine(line: string): string {
+  return line
+    .replace(/\u0000/gu, " ")
+    .replace(/[ \u00a0]+/gu, " ")
+    .trim();
+}
+
 function repairPdfBrokenWords(text: string): string {
   return cleanPdfLine(text)
     .replace(/차\s+량/gu, "차량")
@@ -258,6 +265,8 @@ function isPdfStructuralScheduleColumn(text: string): boolean {
   const compact = text.replace(/\s+/gu, "");
   return compact.length <= 10
     && (
+      /^(?:제)?\d{1,2}일(?:차)?$/u.test(compact)
+      ||
       isPdfBareDateOrTimeLine(compact)
       || /^(?:전용)?(?:버스|차량|전용버스|전용차량)$/u.test(compact)
       || /^[가-힣A-Za-z]{1,10}$/u.test(compact)
@@ -303,6 +312,57 @@ function normalizePdfScheduleLine(line: string): string {
     .trim();
 }
 
+interface PdfScheduleContext {
+  origin: string;
+  destination: string;
+  region: string;
+  transport: string;
+  time: string;
+  pendingArrivalTime: string;
+}
+
+interface PdfScheduleMeta {
+  region: string;
+  transport: string;
+  time: string;
+  contentHint: string;
+  contextOnly: boolean;
+}
+
+function normalizePdfTimeToken(value: string): string {
+  return value.replace(";", ":").trim();
+}
+
+function extractPdfTimeToken(value: string): string {
+  return normalizePdfTimeToken(/\b\d{1,2}[:;]\d{2}(?:\(\+1\))?\b/u.exec(value)?.[0] ?? "");
+}
+
+function isPdfTransportToken(value: string): boolean {
+  const compact = value.replace(/\s+/gu, "");
+  return /^(?:전용차량|전용버스|전용차|차량|버스|고속열차|열차|기차|항공|국내선|국제선|[-]|[A-Z]{2}\d{2,4})$/iu.test(compact);
+}
+
+function isPdfLocationToken(value: string): boolean {
+  const text = repairPdfBrokenWords(value);
+  if (!text || text.length > 24) return false;
+  if (extractPdfTimeToken(text) || isPdfTransportToken(text) || hasPdfScheduleSignal(text)) return false;
+  return /^[\p{L}\s@.-]+$/u.test(text);
+}
+
+function inferPdfRegionFromContent(content: string): string {
+  const text = repairPdfBrokenWords(content);
+  const departure = /([\p{L}]+)\s*출발/u.exec(text);
+  const arrival = /([\p{L}]+)\s*도착/u.exec(text);
+  const movement = /^([\p{L}]+)로\s*이동/u.exec(text);
+  return cleanPdfLine(departure?.[1] ?? arrival?.[1] ?? movement?.[1] ?? "");
+}
+
+function stripPdfDatePrefixPreservingColumns(line: string): string {
+  return line
+    .replace(/^\(?\s*(?:0?[1-9]|1[0-2])[./]\s*(?:3[01]|[12]\d|0?[1-9])\.?\s*\)?(?:\s*\([^)]+\))?\s*/u, "")
+    .trim();
+}
+
 function parsePdfMonthDayDateLine(line: string): { date: string; rest: string } | null {
   const match = /^\(?\s*(0?[1-9]|1[0-2])[./]\s*(3[01]|[12]\d|0?[1-9])\.?\s*\)?(?:\s*\([^)]+\))?\s*(.*)$/u.exec(line);
   if (!match?.[1] || !match[2]) return null;
@@ -320,11 +380,136 @@ function stripPdfLeadingScheduleColumns(line: string): string {
 
   const tail = parts[parts.length - 1];
   const head = parts.slice(0, -1);
+  if (tail && hasPdfScheduleSignal(tail) && head.some((part) => /^(?:제)?\d{1,2}일(?:차)?$/u.test(part.replace(/\s+/gu, "")))) {
+    return tail;
+  }
   if (tail && hasPdfScheduleSignal(tail) && head.every(isPdfStructuralScheduleColumn)) {
+    return tail;
+  }
+  if (tail && hasPdfScheduleSignal(tail) && parts.length >= 3 && head.join("").replace(/\s+/gu, "").length <= 30) {
     return tail;
   }
 
   return line;
+}
+
+function splitPdfColumns(line: string): string[] {
+  return line
+    .split(/\t+/u)
+    .map((part) => repairPdfBrokenWords(part))
+    .map((part) => part.replace(/^[▶□■└n•·\-→|\s]+/u, "").trim())
+    .filter(Boolean);
+}
+
+function parsePdfScheduleMeta(rawLine: string, context: PdfScheduleContext): PdfScheduleMeta {
+  const columns = splitPdfColumns(rawLine);
+  const meta: PdfScheduleMeta = {
+    region: "",
+    transport: "",
+    time: "",
+    contentHint: "",
+    contextOnly: false,
+  };
+
+  if (columns.length === 0) return meta;
+
+  const rawClean = repairPdfBrokenWords(rawLine);
+  const flightEvent = /\b((?:OZ|KE|TW|AY|VY)\s?\d{2,4})\b[\s\S]*?(\d{1,2}[:;]\d{2}(?:\(\+1\))?)[\s\S]*?([\p{L}]+)\s*(출발|도착)/iu.exec(rawClean);
+  if (flightEvent?.[1] && flightEvent[2] && flightEvent[3] && flightEvent[4]) {
+    const transport = flightEvent[1].replace(/\s+/gu, "");
+    const time = normalizePdfTimeToken(flightEvent[2]);
+    const region = cleanPdfLine(flightEvent[3]);
+    context.transport = transport;
+    context.time = time;
+    context.region = region;
+    meta.region = region;
+    meta.transport = transport;
+    meta.time = time;
+    meta.contentHint = `${region} ${flightEvent[4]}`;
+    return meta;
+  }
+
+  const normalizedLine = normalizePdfScheduleLine(rawLine);
+  const leadingTime = extractPdfTimeToken(rawLine);
+  if (columns.length === 1) {
+    const only = columns[0] ?? "";
+    if (isPdfTransportToken(only)) {
+      context.transport = only;
+      meta.contextOnly = true;
+      return meta;
+    }
+    if (extractPdfTimeToken(only) && cleanPdfLine(only) === extractPdfTimeToken(only)) {
+      context.time = extractPdfTimeToken(only);
+      meta.contextOnly = true;
+      return meta;
+    }
+  }
+
+  const first = columns[0] ?? "";
+  const second = columns[1] ?? "";
+  const third = columns[2] ?? "";
+  if (columns.length === 2 && isPdfLocationToken(first) && isPdfLocationToken(second)) {
+    context.origin = first;
+    context.destination = second;
+    context.region = second;
+    meta.contextOnly = true;
+    return meta;
+  }
+
+  const timeColumnIndex = columns.findIndex((column) => Boolean(extractPdfTimeToken(column)));
+  const transportColumn =
+    columns.find((column) => isPdfTransportToken(column) && column !== "-") ??
+    columns.find((column) => isPdfTransportToken(column)) ??
+    "";
+  if (isPdfLocationToken(first) && isPdfLocationToken(second)) {
+    context.origin = first;
+    context.destination = second;
+    context.region = second;
+  }
+  if (transportColumn) context.transport = transportColumn;
+  if (timeColumnIndex >= 0) context.time = extractPdfTimeToken(columns[timeColumnIndex] ?? "");
+  if (timeColumnIndex >= 0) {
+    const timeColumn = columns[timeColumnIndex] ?? "";
+    const time = extractPdfTimeToken(timeColumn);
+    const sameColumnContent = cleanPdfLine(timeColumn.replace(time, ""));
+    const tailContent = columns.slice(timeColumnIndex + 1).join(" ");
+    meta.contentHint = cleanPdfLine([sameColumnContent, tailContent].filter(Boolean).join(" "));
+  }
+
+  const lineWithoutTime = normalizedLine.replace(/\b\d{1,2}[:;]\d{2}(?:\(\+1\))?\b/gu, " ").replace(/\s{2,}/gu, " ").trim();
+  const hasContentSignal = hasPdfScheduleSignal(lineWithoutTime);
+  const structuralOnly = columns.every((column) =>
+    isPdfLocationToken(column) || isPdfTransportToken(column) || cleanPdfLine(column) === extractPdfTimeToken(column)
+  );
+  meta.contextOnly = !hasContentSignal || structuralOnly;
+
+  const contentRegion = (() => {
+    if (context.origin && normalizedLine.includes(context.origin) && /출발/u.test(normalizedLine)) return context.origin;
+    if (context.destination && normalizedLine.includes(context.destination) && /도착/u.test(normalizedLine)) return context.destination;
+    if (context.destination && /이동/u.test(normalizedLine)) return context.destination;
+    if (isPdfLocationToken(first) && !isPdfTransportToken(second) && timeColumnIndex > 0) return first;
+    return context.region;
+  })();
+
+  const time = (() => {
+    if (/출발/u.test(normalizedLine) && context.time) return context.time;
+    if (/도착/u.test(normalizedLine) && context.pendingArrivalTime) return context.pendingArrivalTime;
+    return leadingTime || context.time;
+  })();
+
+  if (/출발/u.test(normalizedLine) && leadingTime && context.time && leadingTime !== context.time) {
+    context.pendingArrivalTime = leadingTime;
+  } else if (/도착/u.test(normalizedLine) && context.pendingArrivalTime) {
+    context.pendingArrivalTime = "";
+  }
+
+  meta.region = contentRegion;
+  meta.transport = transportColumn || context.transport;
+  meta.time = time;
+
+  if (!meta.region && isPdfLocationToken(first) && !isPdfTransportToken(second)) meta.region = first;
+  if (!meta.transport && isPdfTransportToken(third)) meta.transport = third;
+  return meta;
 }
 
 function cityBeforePdfFlightEvent(line: string, event: "출발" | "도착"): string {
@@ -392,11 +577,19 @@ function stripPdfVisitPrefix(content: string): string {
 function normalizePdfExtractedText(text: string): string {
   const sourceLines = stripPdfPageMarkers(text)
     .split("\n")
-    .map(cleanPdfLine)
+    .map(cleanPdfColumnLine)
     .filter(Boolean);
   const output: string[] = [];
   const seenByDay = new Map<number, Set<string>>();
   const flightSummaries = extractPdfFlightSummaries(sourceLines);
+  const pdfContext: PdfScheduleContext = {
+    origin: "",
+    destination: "",
+    region: "",
+    transport: "",
+    time: "",
+    pendingArrivalTime: "",
+  };
   let currentDayNo = 0;
   let trailerStarted = false;
   let pageInterludeStarted = false;
@@ -409,7 +602,12 @@ function normalizePdfExtractedText(text: string): string {
     output.push(line);
   };
 
-  const pushPdfScheduleItem = (dayNo: number, type: "이동" | "관광" | "숙박" | "기타", content: string): void => {
+  const pushPdfScheduleItem = (
+    dayNo: number,
+    type: "이동" | "관광" | "숙박" | "기타",
+    content: string,
+    meta: PdfScheduleMeta,
+  ): void => {
     const value = cleanPdfLine(content);
     if (!value) return;
     const previous = output[output.length - 1] ?? "";
@@ -421,16 +619,21 @@ function normalizePdfExtractedText(text: string): string {
       output[output.length - 1] = `${previous} ${value}`;
       return;
     }
-    pushUnique(dayNo, `- ${type} | ${value}`);
+    const metaSegments = [
+      (inferPdfRegionFromContent(value) || meta.region) ? `지역=${inferPdfRegionFromContent(value) || meta.region}` : "",
+      (meta.transport || /전용차량/u.test(value)) ? `교통편=${meta.transport || "전용차량"}` : "",
+      meta.time ? `시간=${meta.time}` : "",
+    ].filter(Boolean);
+    pushUnique(dayNo, [`- ${type}`, ...metaSegments, value].join(" | "));
   };
 
-  const pushSplitPdfScheduleItems = (dayNo: number, contentLine: string): boolean => {
+  const pushSplitPdfScheduleItems = (dayNo: number, contentLine: string, meta: PdfScheduleMeta): boolean => {
     const leadingHotel = /^(\d?\s*성급\s*호텔)(?:\s+(.+))?$/u.exec(contentLine);
     if (leadingHotel?.[1]) {
-      pushPdfScheduleItem(dayNo, "숙박", leadingHotel[1]);
+      pushPdfScheduleItem(dayNo, "숙박", leadingHotel[1], meta);
       const suffix = stripPdfVisitPrefix(leadingHotel[2] ?? "");
       if (suffix && /(?:방문|관광|탐방|견학|기관)/u.test(suffix)) {
-        pushPdfScheduleItem(dayNo, "관광", suffix);
+        pushPdfScheduleItem(dayNo, "관광", suffix, meta);
       }
       return true;
     }
@@ -441,14 +644,15 @@ function normalizePdfExtractedText(text: string): string {
     const accommodation = trailingHotel[2].trim();
     if (prefix && hasPdfScheduleSignal(prefix)) {
       const prefixType = pdfScheduleItemType(prefix);
-      pushPdfScheduleItem(dayNo, prefixType === "숙박" ? "기타" : prefixType, prefix);
+      pushPdfScheduleItem(dayNo, prefixType === "숙박" ? "기타" : prefixType, prefix, meta);
     }
-    pushPdfScheduleItem(dayNo, "숙박", accommodation);
+    pushPdfScheduleItem(dayNo, "숙박", accommodation, meta);
     return true;
   };
 
   const processScheduleLine = (rawLine: string): void => {
     if (currentDayNo <= 0) return;
+    const meta = parsePdfScheduleMeta(rawLine, pdfContext);
     const line = normalizePdfScheduleLine(rawLine);
     if (isPdfHotelContactLine(line)) {
       const hotel = normalizePdfHotelLine(line);
@@ -461,12 +665,15 @@ function normalizePdfExtractedText(text: string): string {
     for (const meal of meals) {
       pushUnique(currentDayNo, `- 식사 | ${pdfMealSlotLabel(meal.slot)}: ${meal.text}`);
     }
+    if (meta.contextOnly) return;
 
     const withoutMeals = removePdfMealFragments(line)
       .replace(/^\(?\d{1,2}[./]\d{1,2}\.?\)?\s*/u, "")
       .replace(/^\([월화수목금토일]\)\s*/u, "")
       .trim();
-    const contentLine = stripPdfLeadingScheduleColumns(withoutMeals);
+    const contentLine = meta.contentHint && hasPdfScheduleSignal(meta.contentHint)
+      ? meta.contentHint
+      : stripPdfLeadingScheduleColumns(withoutMeals);
     if (!contentLine || isPdfBareDateOrTimeLine(contentLine) || !hasPdfScheduleSignal(contentLine)) return;
 
     const hotel = /^(?:♣?\s*)?HOTEL\s*[:：]/iu.test(contentLine) || /^(?:Hyatt|Holiday Inn|Radisson)\b/iu.test(contentLine)
@@ -477,10 +684,10 @@ function normalizePdfExtractedText(text: string): string {
       return;
     }
 
-    if (pushSplitPdfScheduleItems(currentDayNo, contentLine)) return;
+    if (pushSplitPdfScheduleItems(currentDayNo, contentLine, meta)) return;
 
     const type = pdfScheduleItemType(contentLine);
-    pushPdfScheduleItem(currentDayNo, type, contentLine);
+    pushPdfScheduleItem(currentDayNo, type, contentLine, meta);
   };
 
   if (flightSummaries.departure) output.push(`항공 출발: ${flightSummaries.departure}`);
@@ -501,7 +708,8 @@ function normalizePdfExtractedText(text: string): string {
     const pdfDate = currentDayNo > 0 ? parsePdfMonthDayDateLine(line) : null;
     if (pdfDate) {
       pushUnique(currentDayNo, pdfDate.date);
-      if (pdfDate.rest) processScheduleLine(pdfDate.rest);
+      const restWithColumns = stripPdfDatePrefixPreservingColumns(rawLine);
+      if (restWithColumns) processScheduleLine(restWithColumns);
       continue;
     }
     if (/\.xlsx$/iu.test(line)) {
