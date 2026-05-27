@@ -925,6 +925,48 @@ describe("parseItineraryByAi AI pipeline", () => {
     expect(result.days[1]?.items[0]?.content).toBe("아오이 이케");
   });
 
+  it("skips AI when the deterministic parser already has strong dated coverage", async () => {
+    process.env.OPENAI_API_KEY = "test-key";
+    vi.resetModules();
+
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { parseItineraryWithDiagnostics } = await import("@/lib/itinerary/aiParser");
+    const result = await parseItineraryWithDiagnostics({
+      rawText: `항공 출발: TW407 인천 출발 11:05 / 바르셀로나 도착 19:00
+항공 귀국: TW408 바르셀로나 출발 21:00 / 인천 도착 16:25
+차량: 전용버스
+*1일차*
+2026-04-17
+- 이동 | 인천국제공항 도착
+- 이동 | 인천 출발
+- 숙박 | 4성급 호텔
+*2일차*
+2026-04-18
+- 이동 | 몬세라트로 이동
+- 관광 | 몬세라트 수도원
+- 숙박 | 4성급 호텔
+*3일차*
+2026-04-19
+- 관광 | 프라도 미술관 탐방
+- 이동 | 똘레도 이동
+- 숙박 | 4성급 호텔`,
+      title: "PDF 기본 파서 우선 테스트",
+    });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(result.diagnostics.source).toBe("fallback-tabular");
+    expect(result.diagnostics.aiAttempted).toBe(false);
+    expect(result.diagnostics.qualityScore).toBeGreaterThanOrEqual(70);
+    expect(result.itinerary.overview.travelPeriod).toEqual({
+      start: "2026-04-17",
+      end: "2026-04-19",
+    });
+    expect(result.itinerary.basics.flight.departure).toContain("TW407");
+    expect(result.itinerary.days).toHaveLength(3);
+  });
+
   it("passes extracted meal and hotel evidence to the AI analysis step", async () => {
     process.env.OPENAI_API_KEY = "test-key";
     vi.resetModules();

@@ -1799,6 +1799,27 @@ function scoreParsedItinerary(
   };
 }
 
+function shouldSkipAiForStrongDeterministicParse(score: ItineraryCandidateScore, rawText: string): boolean {
+  if (!score.acceptable || score.qualityScore < 70 || score.suspiciousItemCount > 0) return false;
+  if (score.meaningfulItemCount < score.expectedMinimumItemCount) return false;
+
+  const coverage = score.fieldCoverage;
+  const visibleDayLineCount = getVisibleDayLineCount(rawText);
+  if (visibleDayLineCount > 1 && coverage.dayCount < visibleDayLineCount) return false;
+  if (coverage.dayCount > 1 && coverage.datedDayCount < coverage.dayCount) return false;
+
+  const hasScheduleDepth = coverage.dayCount >= 2 && coverage.meaningfulItemCount >= coverage.dayCount * 2;
+  if (!hasScheduleDepth) return false;
+
+  const metadataSignals = [
+    coverage.hasFlight,
+    coverage.hasVehicle,
+    coverage.hasHotelSummary || coverage.accommodationCount > 0,
+    !rawTextHasMeal(rawText) || coverage.mealCount > 0,
+  ].filter(Boolean).length;
+  return metadataSignals >= 3;
+}
+
 function buildParserWarnings(
   source: ItineraryParserSource,
   score: ItineraryCandidateScore,
@@ -3777,6 +3798,22 @@ export async function parseItineraryWithDiagnostics({ rawText, title }: ParseWit
     : "deterministic-narrative";
   const fallbackScore = scoreParsedItinerary(fallbackCandidate, fallbackResult, preprocessedText);
   const candidateScores: ItineraryCandidateScore[] = [fallbackScore];
+
+  if (shouldSkipAiForStrongDeterministicParse(fallbackScore, preprocessedText)) {
+    return withDiagnosticsQuality(
+      {
+        source: fallbackCandidate === "deterministic-tabular" ? "fallback-tabular" : "fast-text",
+        aiAttempted: false,
+        fallbackMeaningfulItemCount: fallbackQuality.meaningfulItemCount,
+        expectedMinimumItemCount: fallbackQuality.expectedMinimumItemCount,
+        evidenceCounts,
+      },
+      fallbackResult,
+      preprocessedText,
+      fallbackCandidate,
+      candidateScores,
+    );
+  }
 
   try {
     aiResult = applyRawMealOverrides(
