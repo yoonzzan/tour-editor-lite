@@ -110,6 +110,19 @@ const INLINE_EXPECTATIONS: Array<{ marker: string; expected: GoldenExpected }> =
       ],
       requiredHotels: ["Holiday Inn Frankfurt", "Radisson Blu Royal"],
       forbiddenContents: ["참고사항", "가이드 통역비", "환율", "감사합니다"],
+      requiredItemFields: [
+        { dayNo: 1, contentIncludes: "공항 출발", region: "공항", transport: "KE945", time: "10:50" },
+        { dayNo: 5, contentIncludes: "프랑크푸르트 출발", region: "프랑크푸르트", transport: "AY1412", time: "11:30" },
+        { dayNo: 8, contentIncludes: "헬싱키 출발", region: "헬싱키", transport: "AY041", time: "17:30" },
+      ],
+      forbiddenItemFields: [
+        { dayNo: 2, contentIncludes: "Zent Frenger", region: "공항" },
+        { dayNo: 2, contentIncludes: "Zent Frenger", transport: "KE945" },
+        { dayNo: 2, contentIncludes: "하이델베르크성", region: "공항" },
+        { dayNo: 2, contentIncludes: "하이델베르크성", transport: "KE945" },
+        { dayNo: 6, contentIncludes: "슈퍼셀", transport: "AY1412" },
+        { dayNo: 7, contentIncludes: "시벨리우스 공원", transport: "AY1412" },
+      ],
     },
   },
   {
@@ -168,6 +181,13 @@ interface GoldenExpected {
     transport?: string;
     time?: string;
   }>;
+  forbiddenItemFields?: Array<{
+    dayNo?: number;
+    contentIncludes: string;
+    region?: string;
+    transport?: string;
+    time?: string;
+  }>;
   requiredContents?: string[];
   requiredMeals?: Array<{
     slot: MealSlot;
@@ -203,7 +223,10 @@ interface ParsePayload {
 
 function listFixtureCases(extensions: Set<string>): GoldenCase[] {
   return readdirSync(FIXTURE_DIR)
-    .filter((name) => !name.startsWith("~$") && extensions.has(path.extname(name).toLowerCase()))
+    .filter((name) =>
+      !name.startsWith("~$") &&
+      !name.includes("_CONVERTER_LOCAL_") &&
+      extensions.has(path.extname(name).toLowerCase()))
     .sort((left, right) => left.localeCompare(right))
     .map((name) => ({
       name,
@@ -260,6 +283,10 @@ function loadExpected(testCase: GoldenCase): GoldenExpected | null {
     requiredItemFields: [
       ...(fileExpected.requiredItemFields ?? []),
       ...(inlineExpected.requiredItemFields ?? []),
+    ],
+    forbiddenItemFields: [
+      ...(fileExpected.forbiddenItemFields ?? []),
+      ...(inlineExpected.forbiddenItemFields ?? []),
     ],
     requiredContents: [...(fileExpected.requiredContents ?? []), ...(inlineExpected.requiredContents ?? [])],
     requiredMeals: [...(fileExpected.requiredMeals ?? []), ...(inlineExpected.requiredMeals ?? [])],
@@ -386,6 +413,24 @@ describe("itinerary golden fixtures", () => {
       }
       if (required.time !== undefined) {
         expect(item?.time, `${testCase.name} item ${required.contentIncludes} time`).toBe(required.time);
+      }
+    }
+    for (const forbidden of expected?.forbiddenItemFields ?? []) {
+      const items = itinerary.days
+        .filter((day) => forbidden.dayNo === undefined || day.dayNo === forbidden.dayNo)
+        .flatMap((day) => day.items)
+        .filter((candidate) => candidate.content.includes(forbidden.contentIncludes));
+      expect(items.length, `${testCase.name} forbidden item ${forbidden.contentIncludes}`).toBeGreaterThan(0);
+      for (const item of items) {
+        if (forbidden.region !== undefined) {
+          expect(item.region, `${testCase.name} item ${forbidden.contentIncludes} region`).not.toBe(forbidden.region);
+        }
+        if (forbidden.transport !== undefined) {
+          expect(item.transport, `${testCase.name} item ${forbidden.contentIncludes} transport`).not.toBe(forbidden.transport);
+        }
+        if (forbidden.time !== undefined) {
+          expect(item.time, `${testCase.name} item ${forbidden.contentIncludes} time`).not.toBe(forbidden.time);
+        }
       }
     }
 
