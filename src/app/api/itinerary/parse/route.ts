@@ -1305,14 +1305,16 @@ async function hwpToText(file: File): Promise<string> {
   return texts.join("\n");
 }
 
-async function extractRawText(formData: FormData): Promise<{ rawText: string; title?: string; isTextInput: boolean }> {
+async function extractRawText(
+  formData: FormData,
+): Promise<{ rawText: string; title?: string; isTextInput: boolean; preferDirectParser: boolean }> {
   const textInput = formData.get("text");
   const titleInput = formData.get("title");
   const fileInput = formData.get("file");
 
   const title = typeof titleInput === "string" ? titleInput.trim() : undefined;
   if (typeof textInput === "string" && textInput.trim()) {
-    return { rawText: textInput, title, isTextInput: true };
+    return { rawText: textInput, title, isTextInput: true, preferDirectParser: true };
   }
 
   if (!(fileInput instanceof File)) {
@@ -1325,31 +1327,31 @@ async function extractRawText(formData: FormData): Promise<{ rawText: string; ti
   if (name.endsWith(".xls") && !name.endsWith(".xlsx")) throw new Error(UNSUPPORTED_XLS_MESSAGE);
   if (name.endsWith(".hwp") && !name.endsWith(".hwpx")) {
     const rawText = await hwpToText(fileInput);
-    return { rawText, title: title ?? fileTitle, isTextInput: false };
+    return { rawText, title: title ?? fileTitle, isTextInput: false, preferDirectParser: true };
   }
 
   if (name.endsWith(".xlsx")) {
     const rawText = await spreadsheetToText(fileInput);
-    return { rawText, title: title ?? fileTitle, isTextInput: false };
+    return { rawText, title: title ?? fileTitle, isTextInput: false, preferDirectParser: false };
   }
 
   if (name.endsWith(".pdf")) {
     const rawText = await pdfToText(fileInput);
-    return { rawText, title: title ?? fileTitle, isTextInput: false };
+    return { rawText, title: title ?? fileTitle, isTextInput: false, preferDirectParser: false };
   }
 
   if (name.endsWith(".hwpx")) {
     const rawText = await hwpxToText(fileInput);
-    return { rawText, title: title ?? fileTitle, isTextInput: false };
+    return { rawText, title: title ?? fileTitle, isTextInput: false, preferDirectParser: false };
   }
 
   if (name.endsWith(".docx")) {
     const rawText = await docxToText(fileInput);
-    return { rawText, title: title ?? fileTitle, isTextInput: false };
+    return { rawText, title: title ?? fileTitle, isTextInput: false, preferDirectParser: false };
   }
 
   const rawText = await fileInput.text();
-  return { rawText, title: title ?? fileTitle, isTextInput: false };
+  return { rawText, title: title ?? fileTitle, isTextInput: false, preferDirectParser: false };
 }
 
 function isDebugRequest(req: NextRequest): boolean {
@@ -1420,8 +1422,8 @@ function streamParseProgress(req: NextRequest): Response {
         send({ stage: "received", message: progressMessage("received") });
         const formData = await req.formData();
         send({ stage: "extracting", message: progressMessage("extracting") });
-        const { rawText, title, isTextInput } = await extractRawText(formData);
-        if (isTextInput) {
+        const { rawText, title, isTextInput, preferDirectParser } = await extractRawText(formData);
+        if (isTextInput || preferDirectParser) {
           const result = await parseDirectInputItineraryWithDiagnostics({ rawText, title });
           send({ stage: "completed", message: progressMessage("completed"), result: toPublicParseResult(result, includeDebug) });
           return;
@@ -1465,8 +1467,8 @@ export async function POST(req: NextRequest) {
 
   try {
     const formData = await req.formData();
-    const { rawText, title, isTextInput } = await extractRawText(formData);
-    if (isTextInput) {
+    const { rawText, title, isTextInput, preferDirectParser } = await extractRawText(formData);
+    if (isTextInput || preferDirectParser) {
       const result = await parseDirectInputItineraryWithDiagnostics({ rawText, title });
       const publicResult = toPublicParseResult(result, isDebugRequest(req));
       return NextResponse.json(publicResult, {
