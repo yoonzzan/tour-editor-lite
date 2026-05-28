@@ -29,6 +29,8 @@ const INLINE_EXPECTATIONS: Array<{ marker: string; expected: GoldenExpected }> =
       forbiddenHotels: ["호텔 체크인후 석식", "호텔투숙 및 휴식"],
       requiredItemFields: [
         { dayNo: 2, contentIncludes: "에도시대 거리 노보리벳츠 시대촌 관광", transport: "차량" },
+        { dayNo: 4, contentIncludes: "치토세공항 출발", region: "치토세공항", time: "14:30" },
+        { dayNo: 4, contentIncludes: "인천공항 도착", region: "인천공항", time: "17:45" },
       ],
       forbiddenItemFields: [
         { dayNo: 4, contentIncludes: "조식후 삿포로 이동", region: "오전" },

@@ -58,4 +58,40 @@ describe("buildItineraryDisplayDays", () => {
 
     expect(day?.mealText).toBe("조식 호텔식\n중식 현지식\n석식 한식");
   });
+
+  it("displays meal slots in breakfast lunch dinner order regardless of item order", () => {
+    const days: DaySchedule[] = [
+      {
+        dayNo: 1,
+        date: "2026-04-22",
+        items: [
+          {
+            id: "meal-dinner",
+            type: "MEAL",
+            content: "석식 한식",
+            mealSlot: "dinner",
+            meal: { dinner: "한식" },
+          },
+          {
+            id: "meal-breakfast",
+            type: "MEAL",
+            content: "조식 호텔식",
+            mealSlot: "breakfast",
+            meal: { breakfast: "호텔식" },
+          },
+          {
+            id: "meal-lunch",
+            type: "MEAL",
+            content: "중식 현지식",
+            mealSlot: "lunch",
+            meal: { lunch: "현지식" },
+          },
+        ],
+      },
+    ];
+
+    const [day] = buildItineraryDisplayDays(days);
+
+    expect(day?.mealText).toBe("조식 호텔식\n중식 현지식\n석식 한식");
+  });
 });

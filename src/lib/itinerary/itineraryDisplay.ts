@@ -1,5 +1,5 @@
 import type { ItineraryData, ScheduleItem } from "@/types";
-import { getMealSlotRows } from "@/lib/itinerary/meal";
+import { getMealSlotRows, MEAL_SLOTS } from "@/lib/itinerary/meal";
 
 export interface ItineraryDisplayRow {
   id: string;
@@ -88,27 +88,22 @@ function toItemRows(item: ScheduleItem, dayNo: number, date: string): ItineraryD
 }
 
 function collectMealText(items: ScheduleItem[]): string {
-  const lines = items.flatMap((item) =>
-    item.type === "MEAL"
-      ? getMealSlotRows(item, { includeEmpty: false }).map(
-          ({ label, value }) => `${label} ${value?.trim() ? value.trim() : "X"}`
-        )
-      : []
-  );
+  const valuesBySlot = new Map<string, string[]>();
 
-  if (lines.length === 0) return "";
-
-  const seen = new Set<string>();
-  const deduped: string[] = [];
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed || seen.has(trimmed)) continue;
-    seen.add(trimmed);
-    deduped.push(trimmed);
+  for (const item of items) {
+    if (item.type !== "MEAL") continue;
+    for (const { slot, value } of getMealSlotRows(item, { includeEmpty: false })) {
+      const text = value?.trim() ? value.trim() : "X";
+      const values = valuesBySlot.get(slot) ?? [];
+      if (!values.includes(text)) values.push(text);
+      valuesBySlot.set(slot, values);
+    }
   }
 
-  return deduped.join("\n");
+  return MEAL_SLOTS.flatMap(({ key, label }) => {
+    const values = valuesBySlot.get(key) ?? [];
+    return values.map((value) => `${label} ${value}`);
+  }).join("\n");
 }
 
 export function buildItineraryDisplayDays(

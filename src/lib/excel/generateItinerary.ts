@@ -239,7 +239,7 @@ function formatPassenger(data: ItineraryData["overview"]["passengers"]): string 
 function isHotelDetail(value: string, isHotelRow = false): boolean {
   if (isHotelRow) return true;
   if (!value) return false;
-  return /\[(?:숙박|호텔)\]|(?:숙박|호텔)(?:\s|:|$)/u.test(value);
+  return /^\s*(?:\[(?:숙박|호텔)\]|(?:숙박|호텔)\s*[:：])/u.test(value);
 }
 
 function buildHotelRichText(
@@ -249,7 +249,7 @@ function buildHotelRichText(
   const trimmed = detail.trim();
   if (
     isHotelRow &&
-    !/\[(?:숙박|호텔)\]|(?:숙박|호텔)(?:\s|:|$)/u.test(trimmed)
+    !/^\s*(?:\[(?:숙박|호텔)\]|(?:숙박|호텔)\s*[:：])/u.test(trimmed)
   ) {
     return [
       {
