@@ -1223,7 +1223,9 @@ function stripRegionAndTransportFromData(
     ...data,
     days: data.days.map((day) => ({
       ...day,
-      items: day.items.map((item) => withoutRegionAndTransport(item, preserveItemIds)),
+      items: day.items
+        .map((item) => withoutRegionAndTransport(item, preserveItemIds))
+        .filter((item) => item.type === "MEAL" || (isMeaningfulScheduleItem(item) && !isEmptyMealLabel(item.content))),
     })),
   };
 }
