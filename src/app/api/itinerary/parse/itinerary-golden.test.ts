@@ -159,6 +159,18 @@ const INLINE_EXPECTATIONS: Array<{ marker: string; expected: GoldenExpected }> =
 ];
 const SUPPORTED_EXTENSIONS = new Set([".xlsx", ".txt", ".pdf"]);
 const UNSUPPORTED_EXTENSIONS = new Set([".xls"]);
+const IMAGE_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".webp"]);
+const ITINERARY_IMAGE_FIXTURE_MARKERS = [
+  "APQ251260426OZ7",
+  "엠제이투어_장가계",
+  "50+1 김해장가계",
+  "백두산 3박 4일",
+  "260708 상해&우전",
+  "두발로 다낭",
+  "윤기주 골프",
+  "1124 서운면이장단협의회 위해연태",
+] as const;
+const NON_ITINERARY_IMAGE_FIXTURE_MARKERS = ["견적답변정보", "견적답변2"] as const;
 const NOISE_PATTERNS = [
   /견적\s*번호/u,
   /요금\s*표/u,
@@ -254,6 +266,9 @@ function contentTypeFor(extension: string): string {
   if (extension === ".xls") return "application/vnd.ms-excel";
   if (extension === ".pdf") return "application/pdf";
   if (extension === ".hwp") return "application/x-hwp";
+  if (extension === ".png") return "image/png";
+  if (extension === ".jpg" || extension === ".jpeg") return "image/jpeg";
+  if (extension === ".webp") return "image/webp";
   return "text/plain";
 }
 
@@ -372,6 +387,19 @@ beforeEach(() => {
 describe("itinerary golden fixtures", () => {
   const supportedCases = listFixtureCases(SUPPORTED_EXTENSIONS);
   const unsupportedCases = listFixtureCases(UNSUPPORTED_EXTENSIONS);
+  const imageCases = listFixtureCases(IMAGE_EXTENSIONS);
+
+  it("keeps itinerary image fixtures explicitly classified", () => {
+    const classifiedMarkers = [
+      ...ITINERARY_IMAGE_FIXTURE_MARKERS,
+      ...NON_ITINERARY_IMAGE_FIXTURE_MARKERS,
+    ];
+    const unclassified = imageCases
+      .map((testCase) => testCase.name.normalize("NFC"))
+      .filter((name) => !classifiedMarkers.some((marker) => name.includes(marker)));
+
+    expect(unclassified).toEqual([]);
+  });
 
   it.each(supportedCases)("$name parses into usable itinerary data", async (testCase) => {
     const expected = loadExpected(testCase);
