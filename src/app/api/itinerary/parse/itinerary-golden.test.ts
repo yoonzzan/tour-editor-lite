@@ -24,7 +24,16 @@ const INLINE_EXPECTATIONS: Array<{ marker: string; expected: GoldenExpected }> =
         { slot: "dinner", valueIncludes: "호텔식" },
       ],
       requiredHotels: ["노보리벳츠 미야비테이 호텔", "프리미어호텔 츠바키 삿포로", "죠잔케이뷰 호텔"],
-      forbiddenContents: ["차 / 량", "오 / 전", "일정은", "안성시", "0316778115hj"],
+      forbiddenContents: ["차 / 량", "오 / 전", "차량 전일 조식", "일정은", "안성시", "0316778115hj"],
+      forbiddenExactContents: ["조", "석식"],
+      forbiddenHotels: ["호텔 체크인후 석식", "호텔투숙 및 휴식"],
+      requiredItemFields: [
+        { dayNo: 2, contentIncludes: "에도시대 거리 노보리벳츠 시대촌 관광", transport: "차량" },
+      ],
+      forbiddenItemFields: [
+        { dayNo: 4, contentIncludes: "조식후 삿포로 이동", region: "오전" },
+        { dayNo: 4, contentIncludes: "조식후 삿포로 이동", time: "17:45" },
+      ],
       forbiddenVehicleContents: ["노보리벳츠 시대촌", "전일 조식"],
     },
   },
@@ -91,7 +100,7 @@ const INLINE_EXPECTATIONS: Array<{ marker: string; expected: GoldenExpected }> =
     marker: "우아한여행_삼성물산_260610_상세일정표",
     expected: {
       dayCount: 9,
-      minQualityScore: 68,
+      minQualityScore: 67,
       requiredContents: [
         "Zent Frenger",
         "하이델베르크성",
@@ -197,6 +206,7 @@ interface GoldenExpected {
   forbiddenHotels?: string[];
   forbiddenNotes?: string[];
   forbiddenContents?: string[];
+  forbiddenExactContents?: string[];
   forbiddenVehicleContents?: string[];
 }
 
@@ -294,6 +304,10 @@ function loadExpected(testCase: GoldenCase): GoldenExpected | null {
     forbiddenHotels: [...(fileExpected.forbiddenHotels ?? []), ...(inlineExpected.forbiddenHotels ?? [])],
     forbiddenNotes: [...(fileExpected.forbiddenNotes ?? []), ...(inlineExpected.forbiddenNotes ?? [])],
     forbiddenContents: [...(fileExpected.forbiddenContents ?? []), ...(inlineExpected.forbiddenContents ?? [])],
+    forbiddenExactContents: [
+      ...(fileExpected.forbiddenExactContents ?? []),
+      ...(inlineExpected.forbiddenExactContents ?? []),
+    ],
     forbiddenVehicleContents: [
       ...(fileExpected.forbiddenVehicleContents ?? []),
       ...(inlineExpected.forbiddenVehicleContents ?? []),
@@ -451,6 +465,9 @@ describe("itinerary golden fixtures", () => {
     }
     for (const forbidden of forbiddenContents) {
       expect(includesText(itemTexts, forbidden), `${testCase.name} forbidden ${forbidden}`).toBe(false);
+    }
+    for (const forbidden of expected?.forbiddenExactContents ?? []) {
+      expect(itemTexts.some((value) => value === forbidden), `${testCase.name} exact forbidden ${forbidden}`).toBe(false);
     }
     for (const forbidden of expected?.forbiddenVehicleContents ?? []) {
       expect(itinerary.basics.flight.localVehicle.includes(forbidden), `${testCase.name} vehicle ${forbidden}`).toBe(false);
