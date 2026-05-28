@@ -715,6 +715,16 @@ function isPdfContinuationScheduleLine(content: string): boolean {
     || /^(?:수,|당,|의\s*묘|지구|등\s*탐방|카사|탈루냐|광장,|구릉\s*지구|알바이신\s*지구|유대인\s*거리|누에바\s*광장|히랄다\s*탑|세계\s*3대|대성당|산또\s*또메)/u.test(content);
 }
 
+function isHighConfidencePdfTimedEvent(content: string, meta: PdfScheduleMeta): boolean {
+  const compact = repairPdfBrokenWords(content).replace(/\s+/gu, "");
+  const transport = meta.transport.replace(/\s+/gu, "");
+  return /(?:출발|도착)/u.test(compact)
+    && (
+      /(?:공항|인천|치토세|바르셀로나|헬싱키|프랑크푸르트|말라가)/u.test(compact)
+      || /^(?:OZ|KE|TW|AY|VY)\d{2,4}$/iu.test(transport)
+    );
+}
+
 function stripPdfVisitPrefix(content: string): string {
   return content
     .replace(/^[가-힣A-Za-z\s]+(?=■?\s*방문기관)/u, "")
@@ -732,7 +742,7 @@ function normalizePdfExtractedText(text: string): string {
   const flightSummaries = extractPdfFlightSummaries(sourceLines);
   let pendingMeta = emptyPdfScheduleMeta();
   let pendingRegionAmbiguous = false;
-  let pendingTimeAmbiguous = false;
+  let pendingTimeCandidates: string[] = [];
   let pendingMealSlot: "breakfast" | "lunch" | "dinner" | null = null;
   let currentDayNo = 0;
   let trailerStarted = false;
@@ -744,6 +754,10 @@ function normalizePdfExtractedText(text: string): string {
     seen.add(line);
     seenByDay.set(dayNo, seen);
     output.push(line);
+  };
+
+  const syncPendingTimeMeta = (): void => {
+    pendingMeta.time = pendingTimeCandidates.length === 1 ? pendingTimeCandidates[0] ?? "" : "";
   };
 
   const mergePendingMeta = (meta: PdfScheduleMeta): PdfScheduleMeta => ({
@@ -763,12 +777,10 @@ function normalizePdfExtractedText(text: string): string {
       }
     }
     if (meta.time) {
-      if (pendingMeta.time && pendingMeta.time !== meta.time) {
-        pendingMeta.time = "";
-        pendingTimeAmbiguous = true;
-      } else if (!pendingTimeAmbiguous) {
-        pendingMeta.time = meta.time;
+      if (!pendingTimeCandidates.includes(meta.time)) {
+        pendingTimeCandidates.push(meta.time);
       }
+      syncPendingTimeMeta();
     }
     pendingMeta = {
       ...pendingMeta,
@@ -776,10 +788,42 @@ function normalizePdfExtractedText(text: string): string {
     };
   };
 
-  const clearPendingMeta = (): void => {
+  const clearPendingMeta = (opts: { preserveTimes?: boolean } = {}): void => {
+    const preservedTimes = opts.preserveTimes ? pendingTimeCandidates : [];
     pendingMeta = emptyPdfScheduleMeta();
+    pendingTimeCandidates = preservedTimes;
+    syncPendingTimeMeta();
     pendingRegionAmbiguous = false;
-    pendingTimeAmbiguous = false;
+  };
+
+  const resolvePendingTimeForContent = (
+    meta: PdfScheduleMeta,
+    content: string,
+  ): { meta: PdfScheduleMeta; usedPendingTime: boolean } => {
+    if (meta.time || pendingTimeCandidates.length === 0) {
+      return { meta, usedPendingTime: false };
+    }
+
+    if (pendingTimeCandidates.length === 1 || isHighConfidencePdfTimedEvent(content, meta)) {
+      const [time, ...rest] = pendingTimeCandidates;
+      pendingTimeCandidates = rest;
+      syncPendingTimeMeta();
+      return {
+        meta: {
+          ...meta,
+          time: time ?? "",
+        },
+        usedPendingTime: true,
+      };
+    }
+
+    return { meta, usedPendingTime: false };
+  };
+
+  const clearPendingMetaAfterSchedule = (resolved: { meta: PdfScheduleMeta; usedPendingTime: boolean }): void => {
+    clearPendingMeta({
+      preserveTimes: pendingTimeCandidates.length > 0 && (resolved.usedPendingTime || !resolved.meta.time),
+    });
   };
 
   const clearPendingMeal = (): void => {
@@ -893,24 +937,26 @@ function normalizePdfExtractedText(text: string): string {
       clearPendingMeta();
       return;
     }
+    const resolvedMeta = resolvePendingTimeForContent(meta, contentLine);
+    const scheduleMeta = resolvedMeta.meta;
 
     const hotel = /^(?:♣?\s*)?HOTEL\s*[:：]/iu.test(contentLine) || /^(?:Hyatt|Holiday Inn|Radisson)\b/iu.test(contentLine)
       ? normalizePdfHotelLine(contentLine)
       : "";
     if (hotel) {
-      clearPendingMeta();
+      clearPendingMetaAfterSchedule(resolvedMeta);
       pushUnique(currentDayNo, `- 숙박 | ${hotel}`);
       return;
     }
 
-    if (pushSplitPdfScheduleItems(currentDayNo, contentLine, meta)) {
-      clearPendingMeta();
+    if (pushSplitPdfScheduleItems(currentDayNo, contentLine, scheduleMeta)) {
+      clearPendingMetaAfterSchedule(resolvedMeta);
       return;
     }
 
     const type = pdfScheduleItemType(contentLine);
-    pushPdfScheduleItem(currentDayNo, type, contentLine, meta);
-    clearPendingMeta();
+    pushPdfScheduleItem(currentDayNo, type, contentLine, scheduleMeta);
+    clearPendingMetaAfterSchedule(resolvedMeta);
   };
 
   if (flightSummaries.departure) output.push(`항공 출발: ${flightSummaries.departure}`);
