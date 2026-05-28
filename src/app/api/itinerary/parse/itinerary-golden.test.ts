@@ -109,7 +109,7 @@ const INLINE_EXPECTATIONS: Array<{ marker: string; expected: GoldenExpected }> =
         { slot: "dinner", valueIncludes: "한식" },
       ],
       requiredHotels: ["Holiday Inn Frankfurt", "Radisson Blu Royal"],
-      forbiddenContents: ["참고사항", "가이드 통역비", "환율", "감사합니다"],
+      forbiddenContents: ["참고사항", "가이드 통역비", "환율", "감사합니다", "출발 조", "자체일정) 석"],
       requiredItemFields: [
         { dayNo: 1, contentIncludes: "공항 출발", region: "공항", transport: "KE945", time: "10:50" },
         { dayNo: 5, contentIncludes: "프랑크푸르트 출발", region: "프랑크푸르트", transport: "AY1412", time: "11:30" },

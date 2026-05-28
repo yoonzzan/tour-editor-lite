@@ -733,12 +733,23 @@ function parseMealFromToken(
   return undefined;
 }
 
+function stripTrailingLooseMealMarker(content: string): string {
+  const cleaned = cleanText(content);
+  const match = /^(.*?)\s+([조중석])$/u.exec(cleaned);
+  if (!match?.[1]) return cleaned;
+  const prefix = cleanText(match[1]);
+  if (!/(?:출발|도착|이동|관광|탐방|방문|견학|본사|생산공장|호텔|조식|체크|자유일정|공원|성|광장|박물관|국립공원)/u.test(prefix)) {
+    return cleaned;
+  }
+  return prefix;
+}
+
 function extractMealsFromContent(content: string): {
   strippedContent: string;
   meals: Array<{ slot: MealSlot; text: string }>;
 } {
   const meals: Array<{ slot: MealSlot; text: string }> = [];
-  let working = content;
+  let working = stripTrailingLooseMealMarker(content);
 
   const segments = working.split("|").map((entry) => cleanText(entry));
   const keepSegment = segments.map(() => true);
@@ -1195,8 +1206,10 @@ function mergeMealItems(existing: ScheduleItem, incoming: ScheduleItem): Schedul
 }
 
 function withoutRegionAndTransport(item: ScheduleItem, preserveItemIds?: ReadonlySet<string>): ScheduleItem {
-  if (preserveItemIds?.has(item.id)) return item;
-  const next = { ...item };
+  const next = item.type === "MEAL"
+    ? { ...item }
+    : { ...item, content: stripTrailingLooseMealMarker(item.content) };
+  if (preserveItemIds?.has(item.id)) return next;
   delete next.region;
   delete next.transport;
   return next;
