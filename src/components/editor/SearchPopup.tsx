@@ -1015,13 +1015,13 @@ export function SearchPopup({ onClose }: Props) {
                 <p className="text-[12.5px] text-muted-foreground">
                   파일을 여기에 드래그하거나 클릭하여 선택하세요
                 </p>
-                <p className="text-[11.5px] text-muted-foreground">최대 10MB</p>
+                <p className="text-[11.5px] text-muted-foreground">XLSX, PDF, TXT, HWP, DOCX, 이미지 / 최대 10MB</p>
               </div>
 
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".xlsx,.csv,.json,.txt,.pdf,.hwp,.hwpx,.docx"
+                accept=".xlsx,.csv,.json,.txt,.pdf,.hwp,.hwpx,.docx,.png,.jpg,.jpeg,.webp"
                 className="hidden"
                 aria-label="파일 선택"
                 onChange={handleFileChange}

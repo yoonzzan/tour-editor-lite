@@ -19,7 +19,36 @@ const PDF_OCR_MAX_PAGES = 6;
 const PDF_OCR_IMAGE_WIDTH = 1600;
 const PDF_TEXT_MIN_CHARS = 80;
 const MAX_SPREADSHEET_SHEETS = 8;
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+const IMAGE_OCR_MAX_DIMENSION = 1600;
+const IMAGE_OCR_JPEG_QUALITY = 90;
+const IMAGE_OCR_TIMEOUT_MS = 60_000;
 const PDF_WORKER_PARTS = ["pdfjs-dist", "legacy", "build", "pdf.worker.min.mjs"];
+const ITINERARY_IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp"]);
+const ITINERARY_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
+const QUOTE_RESPONSE_OCR_MARKERS = [
+  /\[QUOTE_RESPONSE_SCREEN\]/u,
+  /최종\s*합계/u,
+  /환율\s*기준/u,
+  /1\s*인당\s*NET/iu,
+  /예상\s*수익/u,
+  /최종\s*입금가/u,
+  /항공\s*요금/u,
+  /지상\s*요금/u,
+  /공동\s*경비\s*요금/u,
+  /대리점\s*공개/u,
+  /답변\s*첨부파일/u,
+  /유효\s*기간/u,
+] as const;
+const STRONG_QUOTE_RESPONSE_OCR_MARKERS = [
+  /\[QUOTE_RESPONSE_SCREEN\]/u,
+  /최종\s*합계/u,
+  /1\s*인당\s*NET/iu,
+  /최종\s*입금가/u,
+  /랜드\s*수익/u,
+  /대리점\s*공개/u,
+  /답변\s*첨부파일/u,
+] as const;
 let pdfWorkerDataUrlPromise: Promise<string> | null = null;
 
 type OcrMessageContent =
@@ -1139,6 +1168,150 @@ async function callPdfOcr(pageImages: string[]): Promise<string> {
   }
 }
 
+function imageExtension(file: File): string {
+  return path.extname(file.name).toLowerCase();
+}
+
+function isItineraryImageFile(file: File): boolean {
+  return ITINERARY_IMAGE_EXTENSIONS.has(imageExtension(file)) || ITINERARY_IMAGE_TYPES.has(file.type.toLowerCase());
+}
+
+interface PreparedImageForOcr {
+  buffer: Buffer;
+  mimeType: string;
+}
+
+async function prepareImageForOcr(file: File): Promise<PreparedImageForOcr> {
+  const imageBuffer = Buffer.from(await file.arrayBuffer());
+  const canvasModule = await import("@napi-rs/canvas");
+  const sourceImage = await canvasModule.loadImage(imageBuffer);
+  const maxDimension = Math.max(sourceImage.width, sourceImage.height);
+  const scale = Math.min(1, IMAGE_OCR_MAX_DIMENSION / maxDimension);
+  const width = Math.max(1, Math.round(sourceImage.width * scale));
+  const height = Math.max(1, Math.round(sourceImage.height * scale));
+  const canvas = canvasModule.createCanvas(width, height);
+  const context = canvas.getContext("2d");
+
+  context.fillStyle = "#fff";
+  context.fillRect(0, 0, width, height);
+  context.drawImage(sourceImage, 0, 0, width, height);
+
+  return {
+    buffer: canvas.toBuffer("image/jpeg", IMAGE_OCR_JPEG_QUALITY),
+    mimeType: "image/jpeg",
+  };
+}
+
+async function imageToDataUrl(file: File): Promise<string> {
+  const { buffer, mimeType } = await prepareImageForOcr(file);
+  return `data:${mimeType};base64,${buffer.toString("base64")}`;
+}
+
+async function callImageOcr(imageUrl: string): Promise<string> {
+  if (!config.ai.apiKey) {
+    throw new Error("이미지에서 텍스트를 추출하려면 AI API key가 필요합니다.");
+  }
+
+  const controller = new AbortController();
+  const timeoutMs = Math.max(config.ai.parseTimeoutMs, IMAGE_OCR_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const content: OcrMessageContent[] = [
+    {
+      type: "text",
+      text: [
+        "이미지는 여행 일정표 또는 여행 견적서의 일정표 영역이다.",
+        "이미지 전체가 견적 답변 정보 화면이면 첫 줄에 [QUOTE_RESPONSE_SCREEN]을 출력한 뒤 보이는 텍스트를 원문 순서대로 추출해라.",
+        "견적 답변 정보 화면은 최종합계, 환율기준, 항공 요금, 지상 요금, 공동 경비 요금, 대리점 공개 같은 구간이 함께 보이는 화면이다.",
+        "OCR로 보이는 모든 한글/영문/숫자 텍스트를 원문 순서대로 추출해라.",
+        "표는 행 단위로 보존하고, 셀 구분이 보이면 | 로 구분해라.",
+        "일차, 날짜, 지역, 교통편, 시간, 일정, 식사, 숙박 텍스트를 누락하지 마라.",
+        "일정표 이미지에서는 일정 구성에 필요한 텍스트를 우선하고, 회사 푸터/연락처/주의문/장식 문구는 생략해도 된다.",
+        "견적답변, 금액표, 요금표만 있고 여행 일정이 보이지 않으면 보이는 텍스트만 출력하고 일정을 추정하지 마라.",
+        "설명 없이 추출 텍스트만 출력해라.",
+      ].join("\n"),
+    },
+    {
+      type: "image_url",
+      image_url: { url: imageUrl },
+    },
+  ];
+
+  try {
+    const response = await fetch(`${config.ai.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${config.ai.apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: config.ai.model,
+        temperature: 0,
+        max_tokens: 2500,
+        messages: [
+          {
+            role: "user",
+            content,
+          },
+        ],
+      }),
+      signal: controller.signal,
+    });
+
+    const payload = (await response.json()) as OcrChatCompletionResponse;
+    if (response.ok) {
+      const text = extractOcrText(payload);
+      if (text) return text;
+      throw new Error("이미지 OCR 결과가 비어 있습니다.");
+    }
+
+    throw new Error(`이미지 OCR 호출 실패 (${response.status})`);
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error(`이미지 OCR 시간이 ${timeoutMs}ms를 초과했습니다.`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function looksLikeQuoteResponseOcrText(text: string): boolean {
+  const markerCount = QUOTE_RESPONSE_OCR_MARKERS.reduce((count, pattern) => count + (pattern.test(text) ? 1 : 0), 0);
+  const strongMarkerCount = STRONG_QUOTE_RESPONSE_OCR_MARKERS.reduce(
+    (count, pattern) => count + (pattern.test(text) ? 1 : 0),
+    0,
+  );
+  return strongMarkerCount >= 2 || markerCount >= 4;
+}
+
+function looksLikeQuoteResponseImageName(fileName: string): boolean {
+  return /견적\s*답변|quote[-_\s]*response/iu.test(fileName.normalize("NFC"));
+}
+
+async function imageToText(file: File): Promise<string> {
+  if (!isItineraryImageFile(file)) {
+    throw new Error("PNG, JPG, WEBP 이미지 파일만 OCR 처리할 수 있습니다.");
+  }
+  if (file.size <= 0) {
+    throw new Error("OCR 처리할 이미지 파일이 비어 있습니다.");
+  }
+  if (file.size > MAX_IMAGE_BYTES) {
+    throw new Error("이미지 파일은 10MB 이하만 OCR 처리할 수 있습니다.");
+  }
+  if (!config.ai.apiKey) {
+    throw new Error("이미지에서 텍스트를 추출하려면 AI API key가 필요합니다.");
+  }
+  if (looksLikeQuoteResponseImageName(file.name)) {
+    throw new Error("일정표 이미지가 아닙니다. 견적답변 이미지는 견적답변 불러오기에서 처리해 주세요.");
+  }
+
+  const text = await callImageOcr(await imageToDataUrl(file));
+  if (looksLikeQuoteResponseOcrText(text)) {
+    throw new Error("일정표 이미지가 아닙니다. 견적답변 이미지는 견적답변 불러오기에서 처리해 주세요.");
+  }
+  return text;
+}
+
 async function pdfToText(file: File): Promise<string> {
   await ensurePdfCanvasGlobals();
   const { PDFParse } = await import("pdf-parse");
@@ -1337,6 +1510,11 @@ async function extractRawText(
 
   if (name.endsWith(".pdf")) {
     const rawText = await pdfToText(fileInput);
+    return { rawText, title: title ?? fileTitle, isTextInput: false, preferDirectParser: false };
+  }
+
+  if (isItineraryImageFile(fileInput)) {
+    const rawText = await imageToText(fileInput);
     return { rawText, title: title ?? fileTitle, isTextInput: false, preferDirectParser: false };
   }
 

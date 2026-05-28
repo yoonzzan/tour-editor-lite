@@ -47,7 +47,9 @@
 - 견적답변 `환율기준`이 있으면 적용 외화 행이 남지 않아도 환율 영역을 유지하고, 환율 값이 채워진 상태에서는 stale 환율 경고 표시 금지
 - 견적답변 OCR은 `scripts/quote-response-ocr.py` 로컬 PaddleOCR 경로를 사용하며, 유료/외부 OCR API fallback 추가는 별도 승인 필요
 - 일정 직접입력: 파일 첨부 미리보기 형식(`<<상품 정보>>`, `<<상세 일정>>`, `*1일차*`, `- 이동 | ...`)은 일차/줄바꿈 구조를 보존해 deterministic structured parser로 분리 파싱한다. `<<상세 일정>>`이 없어도 `상품 정보`, `항공/교통`, `숙박`, `포함/불포함`, `선택관광`, `쇼핑센터 방문 수`, `유의사항` 메타데이터는 유효하며, `기간`이 있으면 빈 일차를 생성한다.
+- HWP(.hwp) 일정표 업로드는 shared `hwpToText`를 변경하기보다, 추출된 표 토큰(`일자`, `지역`, `교통편`, `시간`, `세부일정`, `제N일`)을 직접입력 deterministic parser에서 복원한다. HWP 표 파싱 회귀는 itinerary-golden fixture로 검증한다.
 - 일정표 가져오기에서 견적산출/비용/원가표 성격 시트는 여행 일정으로 import하지 않는다
+- 일정표 golden fixture 폴더의 `_CONVERTER_LOCAL_` Excel 출력물은 로컬 검증 산출물로 취급하고 golden 입력/expected fixture나 커밋 대상에 포함하지 않는다.
 
 ## 파일 경계 규칙
 - API 인증: 모든 `src/app/api/**` 파일에 `getApiToken()` 또는 NextAuth handler 인증 체크 필수

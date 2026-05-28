@@ -38,6 +38,14 @@ async function makeHwpxFile(): Promise<File> {
   });
 }
 
+function makeTinyImageFile(name = "schedule.jpg"): File {
+  const pngBytes = Uint8Array.from(Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADUlEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC",
+    "base64",
+  ));
+  return new File([pngBytes], name, { type: "image/jpeg" });
+}
+
 async function makeXlsxWithDisplayedTimes(): Promise<File> {
   const workbook = new ExcelJS.Workbook();
   const worksheet = workbook.addWorksheet("일정");
@@ -963,5 +971,189 @@ describe("/api/itinerary/parse", () => {
     const contents = payload.itinerary?.days?.flatMap((day) => day.items?.map((item) => item.content ?? "") ?? []) ?? [];
     expect(contents).toContain("상해 도착 후 호텔 이동");
     expect(contents).toContain("서호 관광");
+  });
+
+  it("extracts itinerary text from uploaded image files before parsing", async () => {
+    process.env.OPENAI_API_KEY = "test-key";
+    vi.resetModules();
+    vi.doUnmock("@napi-rs/canvas");
+
+    const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as {
+        messages?: Array<{ content?: unknown }>;
+        response_format?: { type: string };
+      };
+      const firstContent = body.messages?.[0]?.content;
+
+      if (Array.isArray(firstContent)) {
+        return Response.json({
+          choices: [
+            {
+              message: {
+                content: "제1일 | 인천 | OZ | 10:00 | 인천공항 출발\n제2일 | 다낭 | 전용버스 | 09:00 | 바나힐 관광",
+              },
+            },
+          ],
+        });
+      }
+
+      if (!body.response_format) {
+        return Response.json({
+          choices: [
+            {
+              message: {
+                content: `[AI 분석 결과]
+상품명: 다낭 테스트
+출발일: 2026-06-01
+
+[일차별 일정]
+1일차 | TRANSFER | 인천공항 출발 |  | 10:00 |
+2일차 | SIGHTSEEING | 바나힐 관광 |  | 09:00 |`,
+              },
+            },
+          ],
+        });
+      }
+
+      return Response.json({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                overview: { travelPeriod: { start: "2026-06-01", end: "2026-06-02" } },
+                days: [
+                  { dayNo: 1, items: [{ type: "TRANSFER", time: "10:00", content: "인천공항 출발" }] },
+                  { dayNo: 2, items: [{ type: "SIGHTSEEING", time: "09:00", content: "바나힐 관광" }] },
+                ],
+              }),
+            },
+          },
+        ],
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { POST } = await import("./route");
+    const formData = new FormData();
+    formData.append("file", makeTinyImageFile("danang.jpg"));
+
+    const request = {
+      headers: new Headers({ "x-access-code": "test-code" }),
+      formData: async () => formData,
+    } as unknown as NextRequest;
+
+    const response = await POST(request);
+    const payload = (await response.json()) as {
+      itinerary?: {
+        days?: Array<{
+          items?: Array<{
+            content?: string;
+          }>;
+        }>;
+      };
+      error?: string;
+    };
+
+    expect(payload.error).toBeUndefined();
+    expect(response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+
+    const firstCallInit = fetchMock.mock.calls[0]?.[1];
+    const firstBody = JSON.parse(String(firstCallInit?.body)) as {
+      messages?: Array<{ content?: unknown }>;
+    };
+    const firstContent = firstBody.messages?.[0]?.content;
+    expect(firstContent).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "image_url",
+          image_url: { url: expect.stringMatching(/^data:image\/jpeg;base64,/u) },
+        }),
+      ]),
+    );
+
+    const contents = payload.itinerary?.days?.flatMap((day) => day.items?.map((item) => item.content ?? "") ?? []) ?? [];
+    expect(contents).toContain("인천공항 출발");
+    expect(contents).toContain("바나힐 관광");
+  });
+
+  it("returns a clear error when image OCR needs an AI API key", async () => {
+    process.env.OPENAI_API_KEY = "";
+    vi.resetModules();
+
+    const { POST } = await import("./route");
+    const formData = new FormData();
+    formData.append("file", new File(["fake image"], "schedule.png", { type: "image/png" }));
+
+    const request = {
+      headers: new Headers({ "x-access-code": "test-code" }),
+      formData: async () => formData,
+    } as unknown as NextRequest;
+
+    const response = await POST(request);
+    const payload = (await response.json()) as { error?: string };
+
+    expect(response.status).toBe(422);
+    expect(payload.error).toContain("AI API key");
+  });
+
+  it("rejects quote response screenshots in itinerary image parsing", async () => {
+    process.env.OPENAI_API_KEY = "test-key";
+    vi.resetModules();
+    vi.doUnmock("@napi-rs/canvas");
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({
+      choices: [
+        {
+          message: {
+            content: [
+              "최종합계 1,367,600원",
+              "환율기준 USD 1,500",
+              "1인당 NET 1,277,600",
+              "항공 요금 395,100원",
+              "지상 요금 877,500원",
+              "대리점 공개",
+            ].join("\n"),
+          },
+        },
+      ],
+    })));
+
+    const { POST } = await import("./route");
+    const formData = new FormData();
+    formData.append("file", makeTinyImageFile("quote-response.png"));
+
+    const request = {
+      headers: new Headers({ "x-access-code": "test-code" }),
+      formData: async () => formData,
+    } as unknown as NextRequest;
+
+    const response = await POST(request);
+    const payload = (await response.json()) as { error?: string };
+
+    expect(response.status).toBe(422);
+    expect(payload.error).toContain("견적답변");
+  });
+
+  it("rejects quote response image filenames before OCR", async () => {
+    process.env.OPENAI_API_KEY = "test-key";
+    vi.resetModules();
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { POST } = await import("./route");
+    const formData = new FormData();
+    formData.append("file", makeTinyImageFile("견적답변2.png"));
+
+    const request = {
+      headers: new Headers({ "x-access-code": "test-code" }),
+      formData: async () => formData,
+    } as unknown as NextRequest;
+
+    const response = await POST(request);
+    const payload = (await response.json()) as { error?: string };
+
+    expect(response.status).toBe(422);
+    expect(payload.error).toContain("견적답변");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
