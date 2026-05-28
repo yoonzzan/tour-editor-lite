@@ -253,6 +253,7 @@ function contentTypeFor(extension: string): string {
   }
   if (extension === ".xls") return "application/vnd.ms-excel";
   if (extension === ".pdf") return "application/pdf";
+  if (extension === ".hwp") return "application/x-hwp";
   return "text/plain";
 }
 
@@ -499,5 +500,62 @@ describe("itinerary golden fixtures", () => {
 
     expect(status, testCase.name).toBe(422);
     expect(payload.error, testCase.name).toContain("구형 Excel(.xls)은 보안상 지원하지 않습니다");
+  });
+
+  it("parses HWP table itinerary rows without dropping schedule columns", async () => {
+    const testCase: GoldenCase = {
+      name: "(3)일본(이희대 감사님) (1).hwp",
+      absolutePath: path.join(FIXTURE_DIR, "(3)일본(이희대 감사님) (1).hwp"),
+      extension: ".hwp",
+    };
+    const { status, payload } = await parseFixture(testCase);
+
+    expect(payload.error, testCase.name).toBeUndefined();
+    expect(status).toBe(200);
+    expect(payload.itinerary).toBeDefined();
+    expect(payload.diagnostics?.qualityScore).toBeGreaterThanOrEqual(70);
+
+    const itinerary = payload.itinerary;
+    if (!itinerary) return;
+    expect(itinerary.days).toHaveLength(4);
+    expect(itinerary.overview.travelPeriod).toEqual({ start: "2026-10-02", end: "2026-10-05" });
+    expect(itinerary.basics.flight.departure).toContain("KE 723");
+    expect(itinerary.basics.flight.departure).toContain("09:35");
+    expect(itinerary.basics.flight.arrival).toContain("KE 724");
+    expect(itinerary.basics.flight.arrival).toContain("12:35");
+
+    const itemTexts = allItemTexts(itinerary);
+    for (const required of [
+      "토롯코 열차",
+      "텐류지",
+      "대나무숲",
+      "호센인",
+      "니시키 시장",
+      "청수사",
+      "후시미이나리신사",
+      "도다이지",
+      "수상버스 아쿠아 라이너",
+      "오사카성",
+      "신사이바시 도톤보리",
+    ]) {
+      expect(includesText(itemTexts, required), `${testCase.name} required ${required}`).toBe(true);
+    }
+    for (const forbidden of ["捤獥汤捯", "氠瑢", "일자", "교통편", "세   부   일   정"]) {
+      expect(includesText(itemTexts, forbidden), `${testCase.name} forbidden ${forbidden}`).toBe(false);
+    }
+    for (const forbidden of ["호텔 조식 후", "중식(현지식)"]) {
+      expect(itemTexts.some((value) => value === forbidden), `${testCase.name} exact forbidden ${forbidden}`).toBe(false);
+    }
+    expect(itinerary.basics.accommodation.hotel).toContain("RIHGA Royal Hotel Kyoto");
+    expect(itinerary.basics.accommodation.hotel).toContain("오사카 난바 오리엔탈 호텔");
+    expect(itinerary.basics.accommodation.hotel).not.toContain("호텔 체크");
+    expect(itinerary.basics.accommodation.hotel).not.toContain("호텔 조식");
+
+    const departure = itinerary.days[0]?.items.find((item) => item.content.includes("인천 국제 공항 출발"));
+    expect(departure?.transport).toBe("KE 723");
+    expect(departure?.time).toBe("09:35");
+    const arrival = itinerary.days[3]?.items.find((item) => item.content.includes("간사이 국제공항 출발"));
+    expect(arrival?.transport).toBe("KE 724");
+    expect(arrival?.time).toBe("12:35");
   });
 });

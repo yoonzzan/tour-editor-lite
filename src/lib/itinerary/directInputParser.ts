@@ -694,6 +694,309 @@ function applyMeta(state: DirectParseState, key: string, value: string): void {
   }
 }
 
+interface HwpTableBlock {
+  dayNo: number;
+  date: string;
+  rows: string[];
+}
+
+interface HwpTableMeta {
+  locations: string[];
+  transports: string[];
+  times: string[];
+}
+
+function parseHwpDayMarker(value: string): number | undefined {
+  const match = /^\s*제\s*(\d{1,2})\s*일\s*$/u.exec(cleanText(value));
+  if (!match?.[1]) return undefined;
+  const dayNo = Number(match[1]);
+  return Number.isFinite(dayNo) && dayNo > 0 ? dayNo : undefined;
+}
+
+function isHwpMonthDayToken(value: string): boolean {
+  return /^\d{1,2}\/\d{1,2}$/u.test(cleanText(value));
+}
+
+function parseHwpMonthDayToken(value: string): string {
+  const match = /^(\d{1,2})\/(\d{1,2})$/u.exec(cleanText(value));
+  if (!match?.[1] || !match[2]) return "";
+  return normalizeDateParts(CURRENT_YEAR, match[1], match[2]);
+}
+
+function isHwpWeekdayToken(value: string): boolean {
+  return /^\([월화수목금토일]\)$/u.test(cleanText(value));
+}
+
+function isHwpTimeToken(value: string): boolean {
+  return /^\d{1,2}:\d{2}$/u.test(cleanText(value));
+}
+
+function normalizeHwpTransport(value: string): string {
+  return cleanText(value).replace(/^([A-Z]{2})\s+(\d{2,4})$/iu, "$1 $2");
+}
+
+function isHwpTransportToken(value: string): boolean {
+  return /^(?:[A-Z]{2}\s?\d{2,4}|전용차|전용차량|전용버스)$/iu.test(cleanText(value));
+}
+
+function isHwpHeaderNoise(value: string): boolean {
+  const compact = cleanText(value).replace(/\s+/gu, "");
+  if (!compact) return true;
+  if (/^(?:일정표|일자|지역|교통편|시간|세부일정)$/u.test(compact)) return true;
+  return !/[가-힣A-Za-z0-9]/u.test(compact);
+}
+
+function normalizeHwpLocation(value: string): string {
+  return cleanText(value).replace(/\s+/gu, "");
+}
+
+function hasHwpScheduleSignal(value: string): boolean {
+  return /(출발|도착|수속|이동|중식|석식|조식|탑승|문화체험|산책|관광|시장|공원|신사|사찰|성|숲|도게츠교|쇼핑|호텔|체크|투숙|휴식|감사)/u.test(value);
+}
+
+function isHwpLocationToken(value: string): boolean {
+  const text = cleanText(value);
+  const compact = normalizeHwpLocation(text);
+  if (!compact || compact.length > 12) return false;
+  if (isHwpHeaderNoise(text) || isHwpTimeToken(text) || isHwpTransportToken(text) || isHwpWeekdayToken(text)) return false;
+  return !hasHwpScheduleSignal(text);
+}
+
+function isHwpScheduleContentLine(value: string): boolean {
+  const text = cleanText(value);
+  if (!text || isHwpHeaderNoise(text) || isHwpTimeToken(text) || isHwpTransportToken(text) || isHwpWeekdayToken(text)) {
+    return false;
+  }
+  if (/^(?:[▶■])/.test(text)) return true;
+  if (/^HOTEL\s*[:：]/iu.test(text)) return true;
+  if (isHwpLocationToken(text)) return false;
+  return hasHwpScheduleSignal(text);
+}
+
+function looksLikeHwpTableInput(rawText: string): boolean {
+  const lines = rawText.split(/\r?\n/u).map(cleanText).filter(Boolean);
+  const dayCount = lines.filter((line) => parseHwpDayMarker(line) !== undefined).length;
+  const dateCount = lines.filter(isHwpMonthDayToken).length;
+  const compact = lines.join("\n").replace(/\s+/gu, "");
+  return dayCount >= 2
+    && dateCount >= 2
+    && /일자/u.test(compact)
+    && /교통편/u.test(compact)
+    && /세부일정/u.test(compact);
+}
+
+function hwpTableBlocks(rawText: string): HwpTableBlock[] {
+  const lines = rawText
+    .replace(/\uFEFF/gu, "")
+    .split(/\r?\n/u)
+    .map(cleanText)
+    .filter(Boolean);
+  const blocks: HwpTableBlock[] = [];
+  let current: HwpTableBlock | null = null;
+
+  for (const line of lines) {
+    const dayNo = parseHwpDayMarker(line);
+    if (dayNo) {
+      if (current) blocks.push(current);
+      current = { dayNo, date: "", rows: [] };
+      continue;
+    }
+    if (!current) continue;
+    if (!current.date && isHwpMonthDayToken(line)) {
+      current.date = parseHwpMonthDayToken(line);
+      continue;
+    }
+    if (isHwpMonthDayToken(line) || isHwpWeekdayToken(line) || isHwpHeaderNoise(line)) continue;
+    current.rows.push(line);
+  }
+
+  if (current) blocks.push(current);
+  return blocks.filter((block) => block.date && block.rows.some(isHwpScheduleContentLine));
+}
+
+function splitHwpTableRows(rows: string[]): { meta: HwpTableMeta; contents: string[] } {
+  const firstContentIndex = rows.findIndex(isHwpScheduleContentLine);
+  if (firstContentIndex < 0) return { meta: { locations: [], transports: [], times: [] }, contents: [] };
+
+  const metaRows = rows.slice(0, firstContentIndex);
+  return {
+    meta: {
+      locations: metaRows.filter(isHwpLocationToken).map(normalizeHwpLocation),
+      transports: metaRows.filter(isHwpTransportToken).map(normalizeHwpTransport),
+      times: metaRows.filter(isHwpTimeToken).map(cleanText),
+    },
+    contents: rows.slice(firstContentIndex).filter(isHwpScheduleContentLine),
+  };
+}
+
+function transportIsFlight(value: string): boolean {
+  return /^[A-Z]{2}\s?\d{2,4}$/iu.test(value.replace(/\s+/gu, ""));
+}
+
+function findHwpRegion(content: string, locations: string[]): string {
+  const compactContent = normalizeHwpLocation(content);
+  return locations.find((location) => compactContent.includes(location)) ?? "";
+}
+
+function findHwpTransport(content: string, transports: string[]): string {
+  const flight = transports.find(transportIsFlight) ?? "";
+  if (flight && /공항/u.test(content) && /(출발|도착)/u.test(content) && !/출국\s*수속/u.test(content)) return flight;
+  return transports.find((transport) => !transportIsFlight(transport)) ?? "";
+}
+
+function shouldConsumeHwpTime(value: string): boolean {
+  const text = cleanText(value);
+  if (!text || /^좋은\s+추억/u.test(text)) return false;
+  if (/쇼핑/u.test(text) && !/(이동|공항|출발|도착)/u.test(text)) return false;
+  return true;
+}
+
+function isHwpActualHotelName(value: string): boolean {
+  const text = cleanText(value);
+  if (!/(?:Hotel|HOTEL|호텔)/u.test(text)) return false;
+  return !/(?:조식|체크\s*인|체크인|투숙|휴식|공항|수속|이동)/u.test(text);
+}
+
+function extractHwpMealsAndContent(value: string): { meals: ParsedMeal[]; content: string } {
+  const meals: ParsedMeal[] = [];
+  const content = cleanText(value.replace(
+    /(호텔\s*)?(조식|중식|석식)\s*(?:\(([^)]*)\))?\s*후?/gu,
+    (_match, hotelPrefix: string | undefined, label: string, mealText: string | undefined) => {
+      const slot = slotFromToken(label);
+      if (slot) {
+        const defaultText = hotelPrefix && slot === "breakfast" ? "호텔식" : mealSlotLabel(slot);
+        meals.push({ slot, text: sanitizeMealValue(mealText ?? defaultText, slot) });
+      }
+      return " ";
+    },
+  ));
+  return { meals, content };
+}
+
+function hwpScheduleItemType(content: string, isActualHotel: boolean): ScheduleItemType {
+  if (isActualHotel) return "ACCOMMODATION";
+  if (/(?:호텔|숙박)\s*(?:체크\s*-?\s*인|체크인|투숙|휴식)/u.test(content)) return "OTHER";
+  if (/^(?:[▶■])/u.test(content)) return "SIGHTSEEING";
+  if (/(토롯코|텐류지|대나무숲|노노미야|도게츠교|호센인|니시키|청수사|니넨자카|산넨자카|후시미|도다이지|사슴공원|수상버스|오사카성|도톤보리)/u.test(content)) {
+    return "SIGHTSEEING";
+  }
+  return scheduleItemType(content);
+}
+
+function buildHwpScheduleItem(content: string, meta: { region: string; transport: string; time: string }): ScheduleItem | null {
+  const hotel = /^HOTEL\s*[:：]\s*(.+)$/iu.exec(content)?.[1];
+  const text = cleanText(hotel ?? stripDecorativePrefix(content));
+  if (!text || /^좋은\s+추억/u.test(text)) return null;
+  const actualHotel = isHwpActualHotelName(text);
+  const type = hwpScheduleItemType(content, actualHotel);
+  return {
+    id: randomUUID(),
+    type,
+    content: text,
+    ...(meta.region ? { region: meta.region } : {}),
+    ...(meta.transport ? { transport: meta.transport } : {}),
+    ...(meta.time ? { time: meta.time } : {}),
+    ...(actualHotel ? { hotel: text } : {}),
+  };
+}
+
+function hwpFlightSummary(days: DaySchedule[], direction: "departure" | "arrival"): string {
+  const day = direction === "departure" ? days[0] : days[days.length - 1];
+  const flightItems = day?.items.filter((item) => item.transport && transportIsFlight(item.transport)) ?? [];
+  const departure = flightItems.find((item) => /출발/u.test(item.content));
+  const arrival = flightItems.find((item) => /도착/u.test(item.content));
+  const flightNo = departure?.transport ?? arrival?.transport ?? "";
+  return [flightNo, departure && `${departure.content} ${departure.time ?? ""}`, arrival && `${arrival.content} ${arrival.time ?? ""}`]
+    .filter(Boolean)
+    .map((value) => cleanText(String(value)))
+    .join(" / ");
+}
+
+function parseHwpTableInput(rawText: string, title?: string): ItineraryData | null {
+  if (!looksLikeHwpTableInput(rawText)) return null;
+  const blocks = hwpTableBlocks(rawText);
+  if (blocks.length === 0) return null;
+
+  const hotelNames: string[] = [];
+  const locationNames: string[] = [];
+  const vehicleNames: string[] = [];
+
+  const days = blocks.map((block): DaySchedule => {
+    const { meta, contents } = splitHwpTableRows(block.rows);
+    meta.locations.forEach((location) => appendUnique(locationNames, location));
+    meta.transports.filter((transport) => !transportIsFlight(transport)).forEach((transport) => appendUnique(vehicleNames, transport));
+
+    let timeIndex = 0;
+    const draft = createDraft(block.dayNo, block.date);
+    for (const rawContent of contents) {
+      const content = stripDecorativePrefix(rawContent);
+      const { meals, content: scheduleContent } = extractHwpMealsAndContent(content);
+      const consumesTime = shouldConsumeHwpTime(content);
+      const time = consumesTime ? meta.times[timeIndex] ?? "" : "";
+      const region = findHwpRegion(content, meta.locations);
+      const transport = findHwpTransport(content, meta.transports);
+      const itemContent = scheduleContent || (meals.length > 0 ? "" : content);
+      const item = buildHwpScheduleItem(itemContent, { region, transport, time });
+      meals.forEach((meal) => addMeal(draft, meal));
+      if (item) {
+        draft.items.push(item);
+        if (item.hotel) appendUnique(hotelNames, item.hotel);
+      }
+      if (consumesTime) timeIndex += 1;
+    }
+    return { dayNo: draft.dayNo, date: draft.date, items: draft.items };
+  }).filter((day) => day.items.length > 0);
+
+  if (days.length === 0) return null;
+  const start = days[0]?.date ?? TODAY;
+  const end = days[days.length - 1]?.date ?? start;
+  const result: ItineraryData = {
+    header: {
+      groupName: title || "직접입력 일정",
+      writtenAt: TODAY,
+    },
+    overview: {
+      recipient: "",
+      cities: locationNames.filter((location) => !/^(?:집결지|인천)$/u.test(location)).join(", "),
+      travelPeriod: { start, end },
+      passengers: {
+        adult: 0,
+        child: 0,
+        infant: 0,
+        escort: 0,
+        foc: 0,
+      },
+      fare: {
+        adultPerPerson: 0,
+        childPerPerson: 0,
+        infantPerPerson: 0,
+        total: 0,
+        totalWithCard: 0,
+      },
+    },
+    basics: {
+      flight: {
+        departure: hwpFlightSummary(days, "departure"),
+        arrival: hwpFlightSummary(days, "arrival"),
+        localVehicle: vehicleNames.join(", "),
+      },
+      accommodation: {
+        hotel: hotelNames.join(", "),
+        grade: "",
+        occupancy: "",
+      },
+      included: "",
+      excluded: "",
+      optionalTour: "",
+      shoppingCenters: 0,
+      notes: "",
+    },
+    days,
+  };
+
+  return enforceAccommodationPolicy(result);
+}
+
 function parseDirectInput(rawText: string, title?: string): ItineraryData | null {
   const lines = rawText
     .replace(/\uFEFF/gu, "")
@@ -1198,6 +1501,34 @@ export async function parseDirectInputItineraryWithDiagnostics(
 
   const fast = tryLegacyFastDirectParse(input.rawText);
   if (fast) return fast;
+
+  const hwpTable = parseHwpTableInput(input.rawText, input.title);
+  if (hwpTable) {
+    const fieldCoverage = collectFieldCoverage(hwpTable);
+    const qualityScore = directQualityScore(hwpTable);
+    return {
+      itinerary: hwpTable,
+      diagnostics: {
+        source: "fast-text",
+        aiAttempted: false,
+        selectedCandidate: "deterministic-tabular",
+        qualityScore,
+        fieldCoverage,
+        noiseRemovedCount: 0,
+        candidateScores: [
+          {
+            candidate: "deterministic-tabular",
+            qualityScore,
+            acceptable: qualityScore >= 70,
+            fieldCoverage,
+            meaningfulItemCount: fieldCoverage.meaningfulItemCount,
+            expectedMinimumItemCount: Math.max(fieldCoverage.dayCount, fieldCoverage.dayCount * 2),
+            suspiciousItemCount: 0,
+          },
+        ],
+      },
+    };
+  }
 
   const direct = parseDirectInput(input.rawText, input.title);
   if (!direct) {
