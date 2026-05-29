@@ -968,6 +968,16 @@ function fillDateWindow(days: Array<{ dayNo: number; date: string }>): {
   };
 }
 
+function shouldUseFilenameDateAsMetaStart(titleStartDate: string, days: DaySchedule[]): boolean {
+  if (!titleStartDate || days.length === 0) return Boolean(titleStartDate);
+
+  const dayWindow = fillDateWindow(days.map((day) => ({ dayNo: day.dayNo, date: day.date })));
+  const parsedDayStart = normalizeOptionalDate(dayWindow.start);
+  if (!parsedDayStart || parsedDayStart === ISO_DATE_TODAY) return true;
+
+  return parsedDayStart === titleStartDate;
+}
+
 function addDays(base: string, offset: number): string {
   const [yRaw, mRaw, dRaw] = base.split("-").map(Number);
   const y = yRaw ?? 0;
@@ -2446,7 +2456,9 @@ function extractMetaFromRaw(
   };
   included = included || collectSection(["포함내역", "포함 내역", "포함사항", "포함 사항"]);
   excluded = excluded || collectSection(["불포함내역", "불포함 내역", "불포함사항", "불포함 사항"]);
-  explicitStartDate = explicitStartDate || titleStartDate;
+  if (!explicitStartDate && shouldUseFilenameDateAsMetaStart(titleStartDate, days)) {
+    explicitStartDate = titleStartDate;
+  }
 
   if (!cities) {
     const regionFromDays = days

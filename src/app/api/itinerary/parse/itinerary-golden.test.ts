@@ -81,6 +81,7 @@ const INLINE_EXPECTATIONS: Array<{ marker: string; expected: GoldenExpected }> =
     marker: "1[고객일정표] 오키나와 4일간_260504",
     expected: {
       dayCount: 4,
+      period: { start: "2026-05-18", end: "2026-05-21" },
       requiredContents: [
         "슈리성",
         "아메리칸 빌리지",
