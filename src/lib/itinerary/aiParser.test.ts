@@ -1040,6 +1040,33 @@ describe("parseItineraryByAi AI pipeline", () => {
     expect(result.itinerary.days[3]?.items.some((item) => item.content.includes("장가계 국제공항 도착"))).toBe(true);
   });
 
+  it("splits bracketed meal summaries and strips lodging labels from OCR table rows", async () => {
+    process.env.OPENAI_API_KEY = "";
+    vi.resetModules();
+
+    const { parseItineraryWithDiagnostics } = await import("@/lib/itinerary/aiParser");
+    const rawText = [
+      "DATE | CITY | TRANS | TIME | SCHEDULE",
+      "제2일 | 위해 | 전용차 | 전일 | [식사] (조) 호텔식 (중) 무제한 샤브샤브 (석) 무제한 삼겹살",
+      "제2일 | 위해 | 전용차 | 전일 | [숙박] 위해 체리 드래곤 호텔 또는 동급 (★★★★★)",
+    ].join("\n");
+
+    const result = await parseItineraryWithDiagnostics({
+      rawText,
+      title: "위해 OCR 식사 숙박 테스트",
+    });
+    const dayTwoItems = result.itinerary.days.find((day) => day.dayNo === 2)?.items ?? [];
+
+    expect(dayTwoItems.find((item) => item.mealSlot === "breakfast")?.meal?.breakfast).toBe("호텔식");
+    expect(dayTwoItems.find((item) => item.mealSlot === "lunch")?.meal?.lunch).toBe("무제한 샤브샤브");
+    expect(dayTwoItems.find((item) => item.mealSlot === "dinner")?.meal?.dinner).toBe("무제한 삼겹살");
+    expect(dayTwoItems.some((item) => item.type === "OTHER" && item.content.includes("[식사]"))).toBe(false);
+    expect(dayTwoItems.find((item) => item.type === "ACCOMMODATION")).toMatchObject({
+      content: "위해 체리 드래곤 호텔 또는 동급 (★★★★★)",
+      hotel: "위해 체리 드래곤 호텔 또는 동급 (★★★★★)",
+    });
+  });
+
   it("prefers deterministic table rows over sparse AI image parse output", async () => {
     process.env.OPENAI_API_KEY = "test-key";
     vi.resetModules();

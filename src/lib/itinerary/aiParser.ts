@@ -750,12 +750,31 @@ function stripTrailingLooseMealMarker(content: string): string {
   return prefix;
 }
 
+function stripBracketedAccommodationLabel(content: string): string {
+  return cleanText(content.replace(/^\[\s*(?:숙박|호텔|HOTEL|ACCOMMODATION)\s*\]\s*/iu, ""));
+}
+
+function extractLabeledMealSummary(content: string): Array<{ slot: MealSlot; text: string }> {
+  const cleaned = cleanText(content);
+  const withoutLabel = cleanText(
+    cleaned
+      .replace(/^\[\s*식사\s*\]\s*/u, "")
+      .replace(/^식사\s*[:：]\s*/u, "")
+  );
+  if (!withoutLabel || withoutLabel === cleaned) return [];
+  return extractCompactMealSummary(withoutLabel);
+}
+
 function extractMealsFromContent(content: string): {
   strippedContent: string;
   meals: Array<{ slot: MealSlot; text: string }>;
 } {
   const meals: Array<{ slot: MealSlot; text: string }> = [];
   let working = stripTrailingLooseMealMarker(content);
+  const labeledMealSummary = extractLabeledMealSummary(working);
+  if (labeledMealSummary.length > 0) {
+    return { strippedContent: "", meals: labeledMealSummary };
+  }
 
   const segments = working.split("|").map((entry) => cleanText(entry));
   const keepSegment = segments.map(() => true);
@@ -930,7 +949,7 @@ function extractCompactMealSummary(content: string): Array<{ slot: MealSlot; tex
   if (!text) return [];
 
   const meals: Array<{ slot: MealSlot; text: string }> = [];
-  const mealPattern = /(?:^|[\s,/|])(조식|중식|석식|아침|점심|저녁|[조중석])\s*[:：]?\s*([\s\S]*?)(?=(?:[\s,/|]+(?:조식|중식|석식|아침|점심|저녁|[조중석])\s*[:：]?)|$)/gu;
+  const mealPattern = /(?:^|[\s,/|])(?:\(\s*)?(조식|중식|석식|아침|점심|저녁|[조중석])(?:\s*\))?\s*[:：]?\s*([\s\S]*?)(?=(?:[\s,/|]+(?:\(\s*)?(?:조식|중식|석식|아침|점심|저녁|[조중석])(?:\s*\))?\s*[:：]?)|$)/gu;
   for (const match of text.matchAll(mealPattern)) {
     const slot = toMealSlotByToken(match[1] ?? "");
     if (!slot) continue;
@@ -3434,8 +3453,9 @@ function parseFallbackFromRaw(rawText: string, title?: string): ItineraryData {
     };
 
     if (finalContent) {
-      const split = splitDirectScheduleContent(finalContent);
-      const type = isHotelLabelContent ? "ACCOMMODATION" : fallbackType(split.content);
+      const typeSource = finalContent;
+      const split = splitDirectScheduleContent(stripBracketedAccommodationLabel(finalContent));
+      const type = isHotelLabelContent ? "ACCOMMODATION" : fallbackType(typeSource);
       const mealText = type === "MEAL"
         ? cleanText(finalContent.replace(/(?:^|\s)(?:조식|중식|석식|아침|점심|저녁|조[:：]|중[:：]|석[:：]|\b[BLD]\s*[:：])\s*/iu, ""))
         : "";
@@ -3542,8 +3562,9 @@ function parseFallbackFromRaw(rawText: string, title?: string): ItineraryData {
       const activities = explicitSchedule?.activities ?? splitSimpleList(activityPartRaw);
       for (const activity of activities) {
         if (!isMeaningfulText(activity)) continue;
-        const split = splitDirectScheduleContent(activity);
-        const type = simpleActivityType(split.content);
+        const displayActivity = stripBracketedAccommodationLabel(activity);
+        const split = splitDirectScheduleContent(displayActivity);
+        const type = simpleActivityType(activity);
         const item: ScheduleItem = {
           id: randomUUID(),
           type,
@@ -3648,8 +3669,10 @@ function parseFallbackFromRaw(rawText: string, title?: string): ItineraryData {
     }
 
       if (content) {
-        const split = isHotelLabelLine ? { content } : splitDirectScheduleContent(content);
-        const type = isHotelLabelLine ? "ACCOMMODATION" : fallbackType(split.content);
+        const typeSource = content;
+        const displayContent = stripBracketedAccommodationLabel(content);
+        const split = isHotelLabelLine ? { content: displayContent } : splitDirectScheduleContent(displayContent);
+        const type = isHotelLabelLine ? "ACCOMMODATION" : fallbackType(typeSource);
         const mealSlot = type === "MEAL" ? inferMealSlot(content) : undefined;
         const mealText = type === "MEAL"
           ? cleanText(content.replace(/(?:^|\s)(?:조식|중식|석식|아침|점심|저녁|조[:：]|중[:：]|석[:：]|\b[BLD]\s*[:：])\s*/iu, ""))
@@ -3807,15 +3830,15 @@ function normalizeAiResult(raw: unknown, title?: string): ItineraryData {
         .flatMap((item) => {
           const rawContent = cleanText(item.content);
           const extracted = extractMealsFromContent(rawContent);
-          const contentForSchedule = cleanText(extracted.strippedContent) || (
+          const contentForSchedule = stripBracketedAccommodationLabel(cleanText(extracted.strippedContent) || (
             item.type === "MEAL" ? "" : rawContent
-          );
+          ));
           const split = item.detail
             ? { content: contentForSchedule, detail: cleanText(item.detail) }
             : splitStructuredScheduleContent(contentForSchedule);
           const content = split.content;
           const normalizedItems: ScheduleItem[] = [];
-          const rawType = coerceAccommodationType(item.type ?? (content ? fallbackType(content) : "OTHER"), content);
+          const rawType = coerceAccommodationType(item.type ?? (rawContent ? fallbackType(rawContent) : "OTHER"), content);
           const region = isLikelyRegion(item.region ?? "") ? cleanText(item.region) : "";
           const transport = isLikelyTransport(item.transport ?? "") ? cleanText(item.transport) : "";
           const time = extractTimeToken(cleanText(item.time) || content);
@@ -3833,7 +3856,7 @@ function normalizeAiResult(raw: unknown, title?: string): ItineraryData {
               content,
               detail: type === "MEAL" ? undefined : split.detail,
               mealSlot: type === "MEAL" ? item.mealSlot ?? inferMealSlot(content) : undefined,
-              hotel: cleanText(item.hotel),
+              hotel: stripBracketedAccommodationLabel(cleanText(item.hotel)) || (type === "ACCOMMODATION" ? content : ""),
             });
           }
           for (const meal of extracted.meals) {
