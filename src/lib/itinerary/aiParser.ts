@@ -212,6 +212,8 @@ export interface ItineraryParseDiagnostics {
   fieldCoverage?: ItineraryFieldCoverage;
   candidateScores?: ItineraryCandidateScore[];
   noiseRemovedCount?: number;
+  dateSource?: "raw-text" | "filename" | "fallback-today";
+  removedDuplicateSummaryCount?: number;
   evidenceCounts?: {
     certain: number;
     candidates: number;
@@ -919,6 +921,35 @@ function extractMealsFromContent(content: string): {
   return { strippedContent, meals: dedupedMeals };
 }
 
+function extractCompactMealSummary(content: string): Array<{ slot: MealSlot; text: string }> {
+  const text = cleanText(content);
+  if (!text) return [];
+
+  const meals: Array<{ slot: MealSlot; text: string }> = [];
+  const mealPattern = /(?:^|[\s,/|])(조식|중식|석식|아침|점심|저녁|[조중석])\s*[:：]?\s*([\s\S]*?)(?=(?:[\s,/|]+(?:조식|중식|석식|아침|점심|저녁|[조중석])\s*[:：]?)|$)/gu;
+  for (const match of text.matchAll(mealPattern)) {
+    const slot = toMealSlotByToken(match[1] ?? "");
+    if (!slot) continue;
+    const mealText = sanitizeMealText(match[2] ?? "", slot);
+    if (mealText) meals.push({ slot, text: mealText });
+  }
+
+  const seenSlots = new Set<MealSlot>();
+  return meals.filter((meal) => {
+    if (seenSlots.has(meal.slot)) return false;
+    seenSlots.add(meal.slot);
+    return true;
+  });
+}
+
+function expandCompositeMealSummary(meal: { slot: MealSlot; text: string }): Array<{ slot: MealSlot; text: string }> {
+  if (!/(?:[조중석]\s*[:：]|조식|중식|석식|아침|점심|저녁)/u.test(meal.text)) {
+    return [meal];
+  }
+  const expanded = extractCompactMealSummary(`${mealSlotLabel(meal.slot)}: ${meal.text}`);
+  return expanded.length > 1 ? expanded : [meal];
+}
+
 function fillDateWindow(days: Array<{ dayNo: number; date: string }>): {
   start: string;
   end: string;
@@ -1158,9 +1189,11 @@ function mealTextScore(value: string): number {
   if (!normalized) return 0;
   if (isEmptyMealLabel(normalized)) return 0;
   let score = normalized.length;
+  const mealMarkerCount = normalized.match(/(?:[조중석]\s*[:：]|조식|중식|석식|아침|점심|저녁|\b[BLD]\s*[:：])/giu)?.length ?? 0;
   if (/(?:식사\s*구분|[조중석]\s*[:：]|조식|중식|석식|아침|점심|저녁|\b[BLD]\s*[:：])/iu.test(normalized)) {
     score -= 2;
   }
+  if (mealMarkerCount >= 2) score -= 80;
   if (/^(?:후)(?:\s|$)/u.test(normalized) || /\s후\s/u.test(normalized)) score -= 40;
   if (/(관광|투어|체험|쇼핑|골프|관람|견학|캠퍼스|박물관|식물원|차이나타운|머라이언|유니버셜|가든스|리버원더스|야경쇼|이동|공항|출발|도착|미팅)/u.test(normalized)) {
     score -= 30;
@@ -1680,10 +1713,64 @@ function isNoisyScheduleContent(value: string): boolean {
   return false;
 }
 
+function isLikelyDuplicateDaySummary(value: string): boolean {
+  const text = cleanText(value);
+  if (text.length < 50) return false;
+  const scheduleSignals = [
+    /출발/u,
+    /도착/u,
+    /관광/u,
+    /케이블카|유람선|동굴|마사지|야경|박물관/u,
+    /호텔\s*투숙\s*및\s*휴식/u,
+  ].filter((pattern) => pattern.test(text)).length;
+  const bulletCount = text.match(/\s[-–]\s*|(?:^|\s)[-*]\S/gu)?.length ?? 0;
+  return (
+    /(?:호텔\s*투숙\s*및\s*휴식|숙박\s*호텔|호텔\s*-)/u.test(text) &&
+    (bulletCount >= 2 || scheduleSignals >= 3)
+  );
+}
+
+function countLikelyDuplicateDaySummaries(rawText: string): number {
+  return rawText
+    .split("\n")
+    .map(cleanText)
+    .filter(isLikelyDuplicateDaySummary)
+    .length;
+}
+
+function removeDuplicateDaySummaryItems(data: ItineraryData): ItineraryData {
+  return {
+    ...data,
+    days: data.days.map((day) => ({
+      ...day,
+      items: day.items.filter((item) =>
+        !isLikelyDuplicateDaySummary(item.content) &&
+        !isLikelyDuplicateDaySummary(item.hotel ?? "")
+      ),
+    })),
+  };
+}
+
+function repairInconsistentTravelPeriod(data: ItineraryData): ItineraryData {
+  const start = normalizeOptionalDate(data.overview.travelPeriod.start);
+  const end = normalizeOptionalDate(data.overview.travelPeriod.end);
+  if (!start || !end || end >= start || data.days.length === 0) return data;
+
+  const period = fillDateWindow(data.days.map((day) => ({ dayNo: day.dayNo, date: day.date })));
+  return {
+    ...data,
+    overview: {
+      ...data.overview,
+      travelPeriod: period,
+    },
+  };
+}
+
 function isMeaningfulText(value: string): boolean {
   const text = cleanText(value);
   if (!text || text.length < 2) return false;
   if (isNoisyScheduleContent(text)) return false;
+  if (isLikelyDuplicateDaySummary(text)) return false;
   if (isMetaOnlyScheduleText(text)) return false;
   if (isScheduleChromeToken(text)) return false;
   if (/^[·•\-+✕\s]+$/u.test(text)) return false;
@@ -1975,7 +2062,9 @@ function withDiagnosticsQuality(
   selectedCandidate: ItineraryParserCandidate,
   candidateScores: ItineraryCandidateScore[],
 ): ItineraryParseResult {
-  const normalizedItinerary = normalizeEmbeddedColumnItems(itinerary);
+  const normalizedItinerary = repairInconsistentTravelPeriod(
+    removeDuplicateDaySummaryItems(normalizeEmbeddedColumnItems(itinerary)),
+  );
   const selectedScore =
     candidateScores.find((score) => score.candidate === selectedCandidate) ??
     scoreParsedItinerary(selectedCandidate, normalizedItinerary, rawText);
@@ -1991,6 +2080,8 @@ function withDiagnosticsQuality(
       fieldCoverage: selectedScore.fieldCoverage,
       candidateScores,
       noiseRemovedCount: countLikelyNoiseLines(rawText),
+      removedDuplicateSummaryCount:
+        diagnostics.removedDuplicateSummaryCount ?? countLikelyDuplicateDaySummaries(rawText),
     },
   };
 }
@@ -2047,6 +2138,36 @@ function parseDateFromAnyText(text: string): string {
   }
 
   return "";
+}
+
+function parseStartDateFromFilename(title?: string): string {
+  if (!title) return "";
+  const text = cleanText(title.normalize("NFC"));
+  const full = /(?:^|\D)(20\d{2})(0[1-9]|1[0-2])([0-2]\d|3[01])(?:\D|$)/u.exec(text);
+  if (full?.[1] && full[2] && full[3]) {
+    return normalizeOptionalDate(`${full[1]}-${full[2]}-${full[3]}`);
+  }
+
+  const short = /(?:^|\D)(\d{2})(0[1-9]|1[0-2])([0-2]\d|3[01])(?:\D|$)/u.exec(text);
+  if (!short?.[1] || !short[2] || !short[3]) return "";
+  const year = 2000 + Number(short[1]);
+  return normalizeOptionalDate(`${year}-${short[2]}-${short[3]}`);
+}
+
+function hasExplicitRawTravelDate(rawText: string): boolean {
+  return rawText
+    .split("\n")
+    .map(cleanText)
+    .some((line) =>
+      /(?:출발일|행사일|행사일자|여행기간|기간|여행시작일|시작일|도착일|여행종료일|종료일)/u.test(line)
+      && Boolean(parseDateFromAnyText(line))
+    );
+}
+
+function detectDateSource(rawText: string, title?: string): "raw-text" | "filename" | "fallback-today" {
+  if (hasExplicitRawTravelDate(rawText)) return "raw-text";
+  if (parseStartDateFromFilename(title)) return "filename";
+  return "fallback-today";
 }
 
 function parseCountByToken(line: string, token: string): number | undefined {
@@ -2163,6 +2284,7 @@ function extractMetaFromRaw(
   let adultPerPerson = 0;
   let explicitStartDate = "";
   let explicitEndDate = "";
+  const titleStartDate = parseStartDateFromFilename(title);
 
   for (const line of lines) {
     const metaLine = stripMetaListPrefix(line).replace(/^['"`]+/u, "");
@@ -2320,6 +2442,7 @@ function extractMetaFromRaw(
   };
   included = included || collectSection(["포함내역", "포함 내역", "포함사항", "포함 사항"]);
   excluded = excluded || collectSection(["불포함내역", "불포함 내역", "불포함사항", "불포함 사항"]);
+  explicitStartDate = explicitStartDate || titleStartDate;
 
   if (!cities) {
     const regionFromDays = days
@@ -2472,6 +2595,7 @@ function mergeItineraryWithMeta(base: ItineraryData, meta: ItineraryMeta): Itine
 function mergeNonScheduleData(base: ItineraryData, source: ItineraryData): ItineraryData {
   const sourceStart = normalizeOptionalDate(source.overview.travelPeriod.start);
   const sourceEnd = normalizeOptionalDate(source.overview.travelPeriod.end);
+  const validSourceEnd = sourceEnd && (!sourceStart || sourceEnd >= sourceStart) ? sourceEnd : "";
 
   return {
     ...base,
@@ -2485,7 +2609,7 @@ function mergeNonScheduleData(base: ItineraryData, source: ItineraryData): Itine
       cities: cleanText(source.overview.cities) || base.overview.cities,
       travelPeriod: {
         start: sourceStart || base.overview.travelPeriod.start,
-        end: sourceEnd || base.overview.travelPeriod.end,
+        end: validSourceEnd || base.overview.travelPeriod.end,
       },
       passengers: {
         adult: source.overview.passengers.adult || base.overview.passengers.adult,
@@ -2727,16 +2851,23 @@ function extractRawMealOverrides(rawText: string): Array<{ dayNo: number; meals:
     if (matches.length === 0 && columnMeals.length === 0) continue;
 
     const meals = byDay.get(currentDayNo) ?? {};
+    for (const meal of extractCompactMealSummary(line)) {
+      meals[meal.slot] = meal.text;
+    }
     for (const match of matches) {
       const slot = toMealSlotByToken(match[1] ?? "");
       if (!slot) continue;
       const value = sanitizeMealText(match[2] ?? "", slot);
       if (value && value !== mealSlotLabel(slot)) {
-        meals[slot] = value;
+        for (const meal of expandCompositeMealSummary({ slot, text: value })) {
+          meals[meal.slot] = meal.text;
+        }
       }
     }
     for (const meal of columnMeals) {
-      meals[meal.slot] = meal.value;
+      for (const expanded of expandCompositeMealSummary({ slot: meal.slot, text: meal.value })) {
+        meals[expanded.slot] = expanded.text;
+      }
     }
     byDay.set(currentDayNo, meals);
   }
@@ -3144,8 +3275,10 @@ function parseFallbackFromRaw(rawText: string, title?: string): ItineraryData {
   const metaDateAnchor = scheduleLines[0]
     ? lines.slice(0, lines.indexOf(scheduleLines[0]))
     : [];
+  const titleStartDate = parseStartDateFromFilename(title);
   let currentDate = normalizeDate(
     metaDateAnchor.map(parseDateFromAnyTextForFallback).find(Boolean)
+    || titleStartDate
     || base.overview.travelPeriod.start
     || ISO_DATE_TODAY,
   );
@@ -3171,6 +3304,10 @@ function parseFallbackFromRaw(rawText: string, title?: string): ItineraryData {
       if (index === undefined) return "";
       const value = cleanText(columns[index] ?? "");
       return isPlaceholderCell(value) ? "" : value;
+    };
+    const rawValueAt = (index: number | undefined): string => {
+      if (index === undefined) return "";
+      return cleanText(columns[index] ?? "");
     };
     const valuesFrom = (index: number | undefined): string => {
       if (index === undefined) return "";
@@ -3215,7 +3352,7 @@ function parseFallbackFromRaw(rawText: string, title?: string): ItineraryData {
     if (!content) return columns.length > 1;
 
     const region = valueAt(headerMap.regionIndex);
-    const transport = valueAt(headerMap.transportIndex);
+    const transport = rawValueAt(headerMap.transportIndex);
     const explicitTime = valueAt(headerMap.timeIndex);
     const inferredTime = explicitTime || extractTimeToken(content);
 
@@ -3223,9 +3360,12 @@ function parseFallbackFromRaw(rawText: string, title?: string): ItineraryData {
     const isHotelLabelContent = /^(?:HOTEL|호텔)$/iu.test(contentLabel);
     const { strippedContent, meals: contentMeals } = extractMealsFromContent(content);
     content = cleanText(strippedContent.replace(/\s*\|\s*$/u, ""));
-    const { strippedContent: detailContent, meals: detailMeals } = detailFromColumn
+    const compactDetailMeals = extractCompactMealSummary(detailFromColumn);
+    const { strippedContent: parsedDetailContent, meals: parsedDetailMeals } = detailFromColumn
       ? extractMealsFromContent(detailFromColumn)
       : { strippedContent: "", meals: [] };
+    const detailContent = compactDetailMeals.length > 1 ? "" : parsedDetailContent;
+    const detailMeals = compactDetailMeals.length > 1 ? compactDetailMeals : parsedDetailMeals;
 
     let finalContent = content;
     let finalDetail = detailContent;
@@ -3237,6 +3377,8 @@ function parseFallbackFromRaw(rawText: string, title?: string): ItineraryData {
       finalContent = finalDetail;
       finalDetail = "";
     }
+    finalContent = cleanText(finalContent.replace(/^[-•·*]\s*/u, ""));
+    finalDetail = cleanText(finalDetail.replace(/^[-•·*]\s*/u, ""));
 
     if (rowDate) {
       if (explicitDayNo !== undefined || !dayDateByNo.has(currentDayNo)) {
@@ -3253,13 +3395,21 @@ function parseFallbackFromRaw(rawText: string, title?: string): ItineraryData {
     const { strippedContent: timedContent, meals: timedMeals } = extractMealsFromContent(finalContent);
     finalContent = cleanText(timedContent.replace(/\s*\|\s*$/u, ""));
     const allMeals = [...contentMeals, ...detailMeals, ...timedMeals];
-    if (allMeals.length > 0 && /^(?:호텔|숙박)$/u.test(compactText(finalContent))) {
+    let duplicateSummary = false;
+    if (isLikelyDuplicateDaySummary(finalContent)) {
+      finalContent = "";
+      duplicateSummary = true;
+    }
+    if (allMeals.length > 0 && /^[-–]?\s*(?:호텔|숙박)$/u.test(finalContent)) {
       finalContent = "";
     }
     const hasMeaningfulContent = finalContent && isMeaningfulText(finalContent);
-    if (!hasMeaningfulContent && allMeals.length === 0) return false;
+    if (!hasMeaningfulContent && allMeals.length === 0) return duplicateSummary;
 
     const addDetailedItem = (payload: ScheduleItem): void => {
+      if (payload.region || payload.transport) {
+        explicitRegionTransportItemIds.add(payload.id);
+      }
       pushItem(currentDayNo, payload);
     };
 
@@ -3283,7 +3433,7 @@ function parseFallbackFromRaw(rawText: string, title?: string): ItineraryData {
       addDetailedItem(item);
     }
 
-    for (const meal of allMeals) {
+    for (const meal of allMeals.flatMap(expandCompositeMealSummary)) {
       const mealValue = sanitizeMealText(meal.text, meal.slot);
       const mealItem: ScheduleItem = {
         id: randomUUID(),
@@ -3465,8 +3615,12 @@ function parseFallbackFromRaw(rawText: string, title?: string): ItineraryData {
     const lineMeals = extractMealsFromContent(itemLine).meals;
     const { strippedContent, meals } = extractMealsFromContent(content);
     content = cleanText(strippedContent.replace(/\s*\|\s*$/u, ""));
+    if (isLikelyDuplicateDaySummary(content)) {
+      content = "";
+    }
     const allLineMeals = [...lineMeals, ...meals];
-    if (allLineMeals.length > 0 && /^(?:호텔|숙박)$/u.test(compactText(content))) {
+    content = cleanText(content.replace(/^[-•·*]\s*/u, ""));
+    if (allLineMeals.length > 0 && /^[-–]?\s*(?:호텔|숙박)$/u.test(content)) {
       content = "";
     }
     if (lineDate && content && !dayDateByNo.has(currentDayNo)) {
@@ -3790,6 +3944,7 @@ export async function parseItineraryWithDiagnostics({ rawText, title }: ParseWit
   const evidenceSummary = collectItineraryEvidence(preprocessedText);
   const evidenceText = formatEvidenceForPrompt(evidenceSummary);
   const evidenceCounts = countEvidenceItems(evidenceSummary);
+  const dateSource = detectDateSource(preprocessedText, title);
   const noKeyFallbackCandidate: ItineraryParserCandidate = /(?:^\s*\[sheet:[^\]]+\]|\t)/imu.test(preprocessedText)
     ? "deterministic-tabular"
     : "deterministic-narrative";
@@ -3801,6 +3956,7 @@ export async function parseItineraryWithDiagnostics({ rawText, title }: ParseWit
         source: "fallback-no-key",
         aiAttempted: false,
         evidenceCounts,
+        dateSource,
       },
       itinerary,
       preprocessedText,
@@ -3930,6 +4086,7 @@ export async function parseItineraryWithDiagnostics({ rawText, title }: ParseWit
         fallbackMeaningfulItemCount: fallbackQuality.meaningfulItemCount,
         expectedMinimumItemCount: fallbackQuality.expectedMinimumItemCount,
         evidenceCounts,
+        dateSource,
       },
       fallbackResult,
       preprocessedText,
@@ -3958,6 +4115,7 @@ export async function parseItineraryWithDiagnostics({ rawText, title }: ParseWit
           aiMeaningfulItemCount: aiQuality.meaningfulItemCount,
           expectedMinimumItemCount: aiQuality.expectedMinimumItemCount,
           evidenceCounts,
+          dateSource,
         },
         aiResult,
         preprocessedText,
@@ -3972,6 +4130,8 @@ export async function parseItineraryWithDiagnostics({ rawText, title }: ParseWit
 
   const aiIsSubstantiallyRicher = Boolean(
     aiResult &&
+    aiQuality.acceptable &&
+    (!hasTabularCellBoundaries || fallbackResult.days.length <= aiResult.days.length) &&
     aiQuality.meaningfulItemCount >= aiQuality.expectedMinimumItemCount &&
     aiQuality.meaningfulItemCount > fallbackQuality.meaningfulItemCount + Math.max(3, Math.ceil(fallbackQuality.meaningfulItemCount * 0.5)),
   );
@@ -3988,6 +4148,7 @@ export async function parseItineraryWithDiagnostics({ rawText, title }: ParseWit
         fallbackMeaningfulItemCount: fallbackQuality.meaningfulItemCount,
         expectedMinimumItemCount: aiQuality.expectedMinimumItemCount,
         evidenceCounts,
+        dateSource,
       },
       itinerary,
       preprocessedText,
@@ -3999,6 +4160,7 @@ export async function parseItineraryWithDiagnostics({ rawText, title }: ParseWit
   const shouldUseFallback =
     !aiResult ||
     !aiQuality.acceptable ||
+    (hasTabularCellBoundaries && fallbackResult.days.length > aiResult.days.length) ||
     (hasTabularCellBoundaries && fallbackQuality.acceptable) ||
     fallbackQuality.meaningfulItemCount > aiQuality.meaningfulItemCount + 1 ||
     fallbackQuality.meaningfulItemCount >= aiQuality.expectedMinimumItemCount;
@@ -4020,6 +4182,7 @@ export async function parseItineraryWithDiagnostics({ rawText, title }: ParseWit
         fallbackMeaningfulItemCount: fallbackQuality.meaningfulItemCount,
         expectedMinimumItemCount: aiQuality.expectedMinimumItemCount,
         evidenceCounts,
+        dateSource,
       },
       itinerary,
       preprocessedText,
@@ -4043,6 +4206,7 @@ export async function parseItineraryWithDiagnostics({ rawText, title }: ParseWit
       fallbackMeaningfulItemCount: fallbackQuality.meaningfulItemCount,
       expectedMinimumItemCount: aiQuality.expectedMinimumItemCount,
       evidenceCounts,
+      dateSource,
     },
     itinerary,
     preprocessedText,

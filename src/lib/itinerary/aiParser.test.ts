@@ -50,6 +50,35 @@ describe("AI prompt builders", () => {
   });
 });
 
+function jangjiajieHighDetailOcrText(): string {
+  return [
+    "[QUOTE_RESPONSE_SCREEN]",
+    "날짜 | 지역 | 교통편 | 시간 | 주요 일정 | 식사",
+    "제1일 | 장가계 | 전용버스 | 김해도착 | -부산 김해국제공항 출발 (3시간 15분 소요) | 조:호텔식",
+    " | | | | -장가계 국가급 풍경명승지 천문산 (케이블카탑승) | 중:석식",
+    " | | | | -세기산에서 가장 높은 곳에 위치한 유리잔도에서의 자유시간 | 석:무제",
+    " | | | | -천문산과 구름다리 유리잔도선 관광 후 숙소 이동 |",
+    " | | | | -장가계 721호 (내부) 호텔 투숙 |",
+    " | | | | -천문산 관광 후 장가계로 이동하여 숙소에서 대피 |",
+    "제2일 | 장가계 | 전용버스 | 호텔 조식 후 | -인공수로를 통해 430m에 있는 산봉우리 보봉호수 유람선 VIP | 조:호텔식",
+    " | | | | -장가계에서 가장 자주 방문하는 곳으로 산을 즐길 수 있는 보봉호수 | 중:석식",
+    " | | | | -하룡공원, 선녀헌화, 천대서해 관광 |",
+    " | | | | -미인봉과 아양의 흙을 실감하는 (모노레일탑승) |",
+    " | | | | -다이아몬드의 신비를 감상할 수 있는 그랜드캐니언 |",
+    " | | | | -여행의 피로를 풀어주는 발천산스파 (90분) |",
+    " | | | | -무릉원의 방향은 무릉원 이곳에서 |",
+    " | | | | HOTEL: 블루베이 호텔 또는 동급 (준특급) |",
+    "제3일 | 장가계 | 전용버스 | 호텔 조식 후 | -바다 타고 이르는 카르스트형의 대명 저항동굴 활동동굴 VIP | 조:호텔식",
+    " | | | | -장가계천문산 (유리다리+엘리베이터+유리잔도+4D VR) | 중:석식",
+    " | | | | -여행의 피로를 풀어주는 발천산스파 (90분) |",
+    " | | | | -무릉원의 방향은 무릉원 이곳에서 |",
+    " | | | | HOTEL: 블루베이 호텔 또는 동급 (준특급) |",
+    "제4일 | 장가계 | 전용버스 | 호텔 조식 후 | -돌과 모래로 만든 그림을 전시한 군성사석화 박물관 | 조:호텔식",
+    " | | | | -공항으로 이동 후 장가계 국제공항 도착 | 중:도시락",
+    " | | | | -부산 김해국제공항 도착 | 석:불포함",
+  ].join("\n");
+}
+
 describe("parseItineraryByAi fallback", () => {
   it("parses quotation metadata separately from simple itinerary days", async () => {
     process.env.OPENAI_API_KEY = "";
@@ -965,6 +994,95 @@ describe("parseItineraryByAi AI pipeline", () => {
     });
     expect(result.itinerary.basics.flight.departure).toContain("TW407");
     expect(result.itinerary.days).toHaveLength(3);
+  });
+
+  it("keeps high-detail image OCR table rows as a deterministic itinerary", async () => {
+    process.env.OPENAI_API_KEY = "";
+    vi.resetModules();
+
+    const { parseItineraryWithDiagnostics } = await import("@/lib/itinerary/aiParser");
+    const rawText = jangjiajieHighDetailOcrText();
+
+    const result = await parseItineraryWithDiagnostics({
+      rawText,
+      title: "50+1 김해장가계 260525 제주항공 견적 체크",
+    });
+
+    expect(result.diagnostics.source).toBe("fallback-no-key");
+    expect(result.diagnostics.dateSource).toBe("filename");
+    expect(result.itinerary.overview.travelPeriod).toEqual({
+      start: "2026-05-25",
+      end: "2026-05-28",
+    });
+    expect(result.itinerary.days).toHaveLength(4);
+    expect(result.itinerary.days[1]?.items.some((item) => item.content.includes("보봉호수"))).toBe(true);
+    expect(result.itinerary.days[1]?.items.some((item) => item.hotel?.includes("블루베이 호텔"))).toBe(true);
+    expect(result.itinerary.days[3]?.items.some((item) => item.content.includes("장가계 국제공항 도착"))).toBe(true);
+  });
+
+  it("prefers deterministic table rows over sparse AI image parse output", async () => {
+    process.env.OPENAI_API_KEY = "test-key";
+    vi.resetModules();
+
+    const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { response_format?: { type: string } };
+      if (!body.response_format) {
+        return Response.json({
+          choices: [
+            {
+              message: {
+                content: [
+                  "[AI 분석 결과]",
+                  "[일차별 일정]",
+                  "1일차 | TRANSFER | 인천공항 출발 |  | 10:00 |",
+                  "2일차 | SIGHTSEEING | 보봉호수 유람선 |  |  |",
+                  "3일차 | SIGHTSEEING | 저항동굴 활동동굴 |  |  |",
+                  "4일차 | SIGHTSEEING | 군성사석화 박물관 |  |  |",
+                ].join("\n"),
+              },
+            },
+          ],
+        });
+      }
+
+      return Response.json({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                days: [
+                  { dayNo: 1, items: [{ type: "TRANSFER", content: "인천공항 출발", time: "10:00" }] },
+                  { dayNo: 2, items: [{ type: "SIGHTSEEING", content: "보봉호수 유람선" }] },
+                  { dayNo: 3, items: [{ type: "SIGHTSEEING", content: "저항동굴 활동동굴" }] },
+                  { dayNo: 4, items: [{ type: "SIGHTSEEING", content: "군성사석화 박물관" }] },
+                ],
+                overview: {
+                  travelPeriod: { start: "2026-05-25", end: "2025-05-28" },
+                },
+              }),
+            },
+          },
+        ],
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { parseItineraryWithDiagnostics } = await import("@/lib/itinerary/aiParser");
+    const result = await parseItineraryWithDiagnostics({
+      rawText: jangjiajieHighDetailOcrText(),
+      title: "50+1 김해장가계 260525 제주항공 견적 체크",
+    });
+
+    expect(result.diagnostics.source).toBe("fallback-tabular");
+    expect(result.itinerary.overview.travelPeriod).toEqual({
+      start: "2026-05-25",
+      end: "2026-05-28",
+    });
+    expect(result.itinerary.days).toHaveLength(4);
+    expect(result.itinerary.days[0]?.items.some((item) => item.content.includes("인천공항"))).toBe(false);
+    expect(result.itinerary.days[0]?.items.some((item) => item.content.includes("부산 김해국제공항 출발"))).toBe(true);
+    expect(result.itinerary.days[1]?.items.length).toBeGreaterThan(5);
+    expect(result.itinerary.days[1]?.items.some((item) => item.hotel?.includes("블루베이 호텔"))).toBe(true);
   });
 
   it("passes extracted meal and hotel evidence to the AI analysis step", async () => {
