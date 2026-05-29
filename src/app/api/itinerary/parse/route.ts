@@ -22,7 +22,7 @@ const MAX_SPREADSHEET_SHEETS = 8;
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const IMAGE_OCR_MAX_DIMENSION = 1600;
 const IMAGE_OCR_JPEG_QUALITY = 90;
-const IMAGE_OCR_TIMEOUT_MS = 60_000;
+const IMAGE_OCR_TIMEOUT_MS = 90_000;
 const PDF_WORKER_PARTS = ["pdfjs-dist", "legacy", "build", "pdf.worker.min.mjs"];
 const ITINERARY_IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp"]);
 const ITINERARY_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
@@ -53,7 +53,7 @@ let pdfWorkerDataUrlPromise: Promise<string> | null = null;
 
 type OcrMessageContent =
   | { type: "text"; text: string }
-  | { type: "image_url"; image_url: { url: string } };
+  | { type: "image_url"; image_url: { url: string; detail?: "auto" | "low" | "high" } };
 
 interface OcrChatChoice {
   message?: {
@@ -1186,6 +1186,17 @@ async function prepareImageForOcr(file: File): Promise<PreparedImageForOcr> {
   const canvasModule = await import("@napi-rs/canvas");
   const sourceImage = await canvasModule.loadImage(imageBuffer);
   const maxDimension = Math.max(sourceImage.width, sourceImage.height);
+  const sourceMimeType = file.type.toLowerCase();
+  if (
+    maxDimension <= IMAGE_OCR_MAX_DIMENSION &&
+    (sourceMimeType === "image/jpeg" || sourceMimeType === "image/jpg")
+  ) {
+    return {
+      buffer: imageBuffer,
+      mimeType: "image/jpeg",
+    };
+  }
+
   const scale = Math.min(1, IMAGE_OCR_MAX_DIMENSION / maxDimension);
   const width = Math.max(1, Math.round(sourceImage.width * scale));
   const height = Math.max(1, Math.round(sourceImage.height * scale));
@@ -1223,7 +1234,13 @@ async function callImageOcr(imageUrl: string): Promise<string> {
         "이미지 전체가 견적 답변 정보 화면이면 첫 줄에 [QUOTE_RESPONSE_SCREEN]을 출력한 뒤 보이는 텍스트를 원문 순서대로 추출해라.",
         "견적 답변 정보 화면은 최종합계, 환율기준, 항공 요금, 지상 요금, 공동 경비 요금, 대리점 공개 같은 구간이 함께 보이는 화면이다.",
         "OCR로 보이는 모든 한글/영문/숫자 텍스트를 원문 순서대로 추출해라.",
-        "표는 행 단위로 보존하고, 셀 구분이 보이면 | 로 구분해라.",
+        "표는 반드시 행 단위로 보존하고, 셀 구분이 보이면 | 로 구분해라.",
+        "일정표 표가 보이면 헤더와 본문을 일자 | 지역 | 교통편 | 시간 | 세부일정 | 식사 순서로 맞춰 출력해라.",
+        "같은 일차 안에서 세부일정 칸에 보이는 각 줄은 별도 행으로 출력하고, 우측 식사 칸은 해당 일차의 첫 행 또는 마지막 행에만 출력해라.",
+        "파란 HOTEL 행은 HOTEL: 호텔명 또는 동급 형식으로 별도 행에 출력해라.",
+        "세부일정 칸의 불릿 원문은 보존하되, 하루 전체 내용을 새 문장으로 요약하거나 한 줄로 다시 합치지 마라.",
+        "장가계 일정표에서는 장가계, 천문산, 천문동, 귀곡잔도, 유리잔도, 72기루, 보봉호수, 천자산, 하룡공원, 어필봉, 선녀헌화, 천대서해, 원가계, 백룡엘리베이터, 미혼대, 천하제일교, 십리화랑, 금편계곡, 황룡동굴, 장가계대협곡, 무릉원, 군성사석화 박물관 같은 고유명사를 특히 주의해라.",
+        "식사 칸의 조/중/석 값은 같은 줄에 합치지 말고 각각 보이는 값을 보존해라.",
         "일차, 날짜, 지역, 교통편, 시간, 일정, 식사, 숙박 텍스트를 누락하지 마라.",
         "일정표 이미지에서는 일정 구성에 필요한 텍스트를 우선하고, 회사 푸터/연락처/주의문/장식 문구는 생략해도 된다.",
         "견적답변, 금액표, 요금표만 있고 여행 일정이 보이지 않으면 보이는 텍스트만 출력하고 일정을 추정하지 마라.",
@@ -1232,7 +1249,7 @@ async function callImageOcr(imageUrl: string): Promise<string> {
     },
     {
       type: "image_url",
-      image_url: { url: imageUrl },
+      image_url: { url: imageUrl, detail: "high" },
     },
   ];
 
@@ -1554,6 +1571,8 @@ function toPublicParseResult(result: ItineraryParseResult, includeDebug: boolean
   if (includeDebug) return result;
   const diagnostics = { ...result.diagnostics };
   delete diagnostics.candidateScores;
+  delete diagnostics.dateSource;
+  delete diagnostics.removedDuplicateSummaryCount;
   return {
     itinerary: result.itinerary,
     diagnostics,

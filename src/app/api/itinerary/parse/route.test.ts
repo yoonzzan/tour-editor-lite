@@ -1067,7 +1067,7 @@ describe("/api/itinerary/parse", () => {
       expect.arrayContaining([
         expect.objectContaining({
           type: "image_url",
-          image_url: { url: expect.stringMatching(/^data:image\/jpeg;base64,/u) },
+          image_url: expect.objectContaining({ url: expect.stringMatching(/^data:image\/jpeg;base64,/u) }),
         }),
       ]),
     );
@@ -1075,6 +1075,163 @@ describe("/api/itinerary/parse", () => {
     const contents = payload.itinerary?.days?.flatMap((day) => day.items?.map((item) => item.content ?? "") ?? []) ?? [];
     expect(contents).toContain("인천공항 출발");
     expect(contents).toContain("바나힐 관광");
+  });
+
+  it("uses filename dates and drops duplicate daily summaries from image OCR tables", async () => {
+    process.env.OPENAI_API_KEY = "test-key";
+    vi.resetModules();
+    vi.doUnmock("@napi-rs/canvas");
+
+    const ocrText = [
+      "일자 | 지역 | 교통편 | 시간 | 세부일정 | 식사",
+      "제1일 | 부산 | 전용버스 | | 부산 김해국제공항 출발 | 조:불포함 중:누룽지백숙 석:철판왕 삼겹구이",
+      "제1일 | 장가계 | 전용버스 | | 장가계 국제공항 도착 |",
+      "제1일 | 장가계 | | | 숙박 김해도착 부산 김해국제공항 출발 -장가계 국제공항 도착 -천문산 관광 -천문호선쇼 관람 호텔 투숙 및 휴식 |",
+      "제1일 | 장가계 | | | HOTEL: 블루베이 호텔 또는 동급 |",
+      "제2일 | 장가계 | 전용차량 | 전일 | 산정호수 보봉호수 유람선 VIP | 조:호텔식 중:보쌈정식 석:한식",
+      "제2일 | 장가계 | 전용차량 | 전일 | 발+전신마사지 90분 |",
+    ].join("\n");
+
+    const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as {
+        messages?: Array<{ content?: unknown }>;
+        response_format?: { type: string };
+      };
+      const firstContent = body.messages?.[0]?.content;
+
+      if (Array.isArray(firstContent)) {
+        return Response.json({
+          choices: [{ message: { content: ocrText } }],
+        });
+      }
+
+      if (!body.response_format) {
+        return Response.json({
+          choices: [
+            {
+              message: {
+                content: `[AI 분석 결과]
+상품명: 김해장가계 테스트
+
+[일차별 일정]
+1일차 | TRANSFER | 부산 김해국제공항 출발
+1일차 | TRANSFER | 장가계 국제공항 도착
+1일차 | ACCOMMODATION | 블루베이 호텔 또는 동급
+2일차 | SIGHTSEEING | 산정호수 보봉호수 유람선 VIP
+2일차 | SIGHTSEEING | 발+전신마사지 90분`,
+              },
+            },
+          ],
+        });
+      }
+
+      return Response.json({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                days: [
+                  {
+                    dayNo: 1,
+                    items: [
+                      { type: "TRANSFER", content: "부산 김해국제공항 출발" },
+                      { type: "TRANSFER", content: "장가계 국제공항 도착" },
+                      { type: "ACCOMMODATION", content: "블루베이 호텔 또는 동급" },
+                    ],
+                  },
+                  {
+                    dayNo: 2,
+                    items: [
+                      { type: "SIGHTSEEING", content: "산정호수 보봉호수 유람선 VIP" },
+                      { type: "SIGHTSEEING", content: "발+전신마사지 90분" },
+                    ],
+                  },
+                ],
+              }),
+            },
+          },
+        ],
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { POST } = await import("./route");
+    const formData = new FormData();
+    formData.append("file", makeTinyImageFile("50+1 김해장가계 260525 제주항공 견적 체크.jpg"));
+
+    const request = {
+      headers: new Headers({ "x-access-code": "test-code" }),
+      formData: async () => formData,
+      nextUrl: new URL("http://localhost/api/itinerary/parse?debug=1"),
+    } as unknown as NextRequest;
+
+    const response = await POST(request);
+    const payload = (await response.json()) as {
+      itinerary?: {
+        overview?: { travelPeriod?: { start?: string; end?: string } };
+        days?: Array<{
+          dayNo?: number;
+          items?: Array<{
+            content?: string;
+            hotel?: string;
+            meal?: Record<string, string>;
+            mealSlot?: string;
+            region?: string;
+            transport?: string;
+            time?: string;
+          }>;
+        }>;
+      };
+      diagnostics?: {
+        dateSource?: string;
+        removedDuplicateSummaryCount?: number;
+      };
+      error?: string;
+    };
+
+    expect(payload.error).toBeUndefined();
+    expect(response.status).toBe(200);
+    expect(payload.diagnostics?.dateSource).toBe("filename");
+    expect(payload.itinerary?.overview?.travelPeriod?.start).toBe("2026-05-25");
+    expect(payload.diagnostics?.removedDuplicateSummaryCount).toBeGreaterThanOrEqual(1);
+
+    const itemTexts = payload.itinerary?.days?.flatMap((day) =>
+      day.items?.flatMap((item) => [item.content ?? "", item.hotel ?? "", ...Object.values(item.meal ?? {})]) ?? [],
+    ) ?? [];
+    expect(itemTexts.some((value) => value.includes("숙박 김해도착"))).toBe(false);
+    expect(itemTexts.some((value) => value.includes("부산 김해국제공항 출발"))).toBe(true);
+    expect(itemTexts.some((value) => value.includes("보봉호수"))).toBe(true);
+    expect(itemTexts.some((value) => value.includes("블루베이 호텔"))).toBe(true);
+
+    const firstDayItems = payload.itinerary?.days?.find((day) => day.dayNo === 1)?.items ?? [];
+    const departure = firstDayItems.find((item) => item.content?.includes("부산 김해국제공항 출발"));
+    expect(departure?.region).toBe("부산");
+    expect(departure?.transport).toBe("전용버스");
+
+    const arrival = firstDayItems.find((item) => item.content?.includes("장가계 국제공항 도착"));
+    expect(arrival?.region).toBe("장가계");
+    expect(arrival?.transport).toBe("전용버스");
+
+    const firstDayMeals = firstDayItems.filter((item) => item.mealSlot);
+    expect(firstDayMeals.find((item) => item.mealSlot === "breakfast")?.meal?.breakfast).toBe("불포함");
+    expect(firstDayMeals.find((item) => item.mealSlot === "lunch")?.meal?.lunch).toBe("누룽지백숙");
+    expect(firstDayMeals.find((item) => item.mealSlot === "dinner")?.meal?.dinner).toBe("철판왕 삼겹구이");
+
+    const secondDayItems = payload.itinerary?.days?.find((day) => day.dayNo === 2)?.items ?? [];
+    const lake = secondDayItems.find((item) => item.content?.includes("보봉호수"));
+    expect(lake?.region).toBe("장가계");
+    expect(lake?.transport).toBe("전용차량");
+    expect(lake?.time).toBe("전일");
+    expect(secondDayItems.find((item) => item.mealSlot === "lunch")?.meal?.lunch).toBe("보쌈정식");
+
+    const firstCallInit = fetchMock.mock.calls[0]?.[1];
+    const firstBody = JSON.parse(String(firstCallInit?.body)) as {
+      messages?: Array<{ content?: Array<{ type: string; text?: string; image_url?: { detail?: string } }> }>;
+    };
+    const prompt = firstBody.messages?.[0]?.content?.find((entry) => entry.type === "text")?.text ?? "";
+    expect(prompt).toContain("하루 전체 내용을 새 문장으로 요약하거나 한 줄로 다시 합치지 마라");
+    const imageContent = firstBody.messages?.[0]?.content?.find((entry) => entry.type === "image_url");
+    expect(imageContent?.image_url?.detail).toBe("high");
   });
 
   it("returns a clear error when image OCR needs an AI API key", async () => {
