@@ -101,6 +101,15 @@ const INLINE_EXPECTATIONS: Array<{ marker: string; expected: GoldenExpected }> =
     },
   },
   {
+    marker: "카자흐스탄_QC00603259001",
+    expected: {
+      requiredMealsByDay: [
+        { dayNo: 5, slot: "breakfast", valueIncludes: "호텔식" },
+      ],
+      forbiddenExactContents: ["조식"],
+    },
+  },
+  {
     marker: "우아한여행_삼성물산_260610_상세일정표",
     expected: {
       dayCount: 9,
@@ -218,6 +227,11 @@ interface GoldenExpected {
     slot: MealSlot;
     valueIncludes: string;
   }>;
+  requiredMealsByDay?: Array<{
+    dayNo: number;
+    slot: MealSlot;
+    valueIncludes: string;
+  }>;
   requiredHotels?: string[];
   forbiddenHotels?: string[];
   forbiddenNotes?: string[];
@@ -320,6 +334,7 @@ function loadExpected(testCase: GoldenCase): GoldenExpected | null {
     ],
     requiredContents: [...(fileExpected.requiredContents ?? []), ...(inlineExpected.requiredContents ?? [])],
     requiredMeals: [...(fileExpected.requiredMeals ?? []), ...(inlineExpected.requiredMeals ?? [])],
+    requiredMealsByDay: [...(fileExpected.requiredMealsByDay ?? []), ...(inlineExpected.requiredMealsByDay ?? [])],
     requiredHotels: [...(fileExpected.requiredHotels ?? []), ...(inlineExpected.requiredHotels ?? [])],
     forbiddenHotels: [...(fileExpected.forbiddenHotels ?? []), ...(inlineExpected.forbiddenHotels ?? [])],
     forbiddenNotes: [...(fileExpected.forbiddenNotes ?? []), ...(inlineExpected.forbiddenNotes ?? [])],
@@ -374,6 +389,13 @@ function assertNoCommonParseAnomalies(testCaseName: string, itinerary: Itinerary
       .map((item) => `${day.dayNo}일차:${item.content}`),
   );
   expect(labeledMealOthers, `${testCaseName} labeled meal rows should not remain as OTHER`).toEqual([]);
+
+  const looseMealOnlyOthers = itinerary.days.flatMap((day) =>
+    day.items
+      .filter((item) => item.type === "OTHER" && /^[|/]\s*(?:호텔식|현지식|한\s*식|한식|불포함|기내식|도시락|자유식)$/u.test(item.content))
+      .map((item) => `${day.dayNo}일차:${item.content}`),
+  );
+  expect(looseMealOnlyOthers, `${testCaseName} loose meal values should not remain as OTHER`).toEqual([]);
 
   const labeledAccommodationTexts = itinerary.days.flatMap((day) =>
     day.items
@@ -557,6 +579,11 @@ describe("itinerary golden fixtures", () => {
         day.items.some((item) => item.meal?.[meal.slot]?.includes(meal.valueIncludes)),
       );
       expect(hasMeal, `${testCase.name} ${meal.slot} ${meal.valueIncludes}`).toBe(true);
+    }
+    for (const meal of expected?.requiredMealsByDay ?? []) {
+      const day = itinerary.days.find((candidate) => candidate.dayNo === meal.dayNo);
+      const hasMeal = day?.items.some((item) => item.meal?.[meal.slot]?.includes(meal.valueIncludes)) ?? false;
+      expect(hasMeal, `${testCase.name} day ${meal.dayNo} ${meal.slot} ${meal.valueIncludes}`).toBe(true);
     }
   });
 

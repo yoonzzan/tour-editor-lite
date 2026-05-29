@@ -763,6 +763,7 @@ DATE|CITY|TRSFT|TIME|ITINERARY|MEALS
     expect(items.find((item) => item.mealSlot === "breakfast")?.meal?.breakfast).toBe("호텔식");
     expect(items.find((item) => item.mealSlot === "lunch")?.meal?.lunch).toBe("현지식");
     expect(items.find((item) => item.mealSlot === "dinner")?.meal?.dinner).toBe("현지식");
+    expect(items.some((item) => item.type === "OTHER" && /^[|/]\s*호텔식$/u.test(item.content))).toBe(false);
   });
 
   it("parses full Korean meal labels with colon in sparse tabular schedules", async () => {
@@ -1065,6 +1066,64 @@ describe("parseItineraryByAi AI pipeline", () => {
       content: "위해 체리 드래곤 호텔 또는 동급 (★★★★★)",
       hotel: "위해 체리 드래곤 호텔 또는 동급 (★★★★★)",
     });
+  });
+
+  it("classifies split parenthesized meal rows as meals", async () => {
+    process.env.OPENAI_API_KEY = "";
+    vi.resetModules();
+
+    const { parseItineraryWithDiagnostics } = await import("@/lib/itinerary/aiParser");
+    const rawText = [
+      "DATE | CITY | TRANS | TIME | SCHEDULE",
+      "제1일 | 위해 | 전용차 | 전일 | (조) 된장찌개+생선구이",
+      "제1일 | 위해 | 전용차 | 전일 | (중) 연변냉면+탕수육",
+      "제1일 | 위해 | 전용차 | 전일 | (석) 무제한 양꼬치",
+      "제2일 | 위해 | 전용차 | 전일 | (조) 호텔식",
+      "제2일 | 위해 | 전용차 | 전일 | (중) 무제한 샤브샤브",
+      "제2일 | 위해 | 전용차 | 전일 | (석) 무제한 삼겹살",
+    ].join("\n");
+
+    const result = await parseItineraryWithDiagnostics({
+      rawText,
+      title: "위해 OCR 분리 식사 테스트",
+    });
+    const dayOneItems = result.itinerary.days.find((day) => day.dayNo === 1)?.items ?? [];
+    const dayTwoItems = result.itinerary.days.find((day) => day.dayNo === 2)?.items ?? [];
+
+    expect(dayOneItems.find((item) => item.mealSlot === "breakfast")?.meal?.breakfast).toBe("된장찌개+생선구이");
+    expect(dayOneItems.find((item) => item.mealSlot === "lunch")?.meal?.lunch).toBe("연변냉면+탕수육");
+    expect(dayOneItems.find((item) => item.mealSlot === "dinner")?.meal?.dinner).toBe("무제한 양꼬치");
+    expect(dayTwoItems.find((item) => item.mealSlot === "breakfast")?.meal?.breakfast).toBe("호텔식");
+    expect(dayTwoItems.find((item) => item.mealSlot === "lunch")?.meal?.lunch).toBe("무제한 샤브샤브");
+    expect(dayTwoItems.find((item) => item.mealSlot === "dinner")?.meal?.dinner).toBe("무제한 삼겹살");
+    expect([...dayOneItems, ...dayTwoItems].some((item) => item.type === "OTHER" && /^\([조중석]\)/u.test(item.content))).toBe(false);
+  });
+
+  it("uses loose split meal column values for empty meal labels", async () => {
+    process.env.OPENAI_API_KEY = "";
+    vi.resetModules();
+
+    const { parseItineraryWithDiagnostics } = await import("@/lib/itinerary/aiParser");
+    const rawText = [
+      "DATE | CITY | TRANS | TIME | SCHEDULE | DETAIL | MEAL | VALUE",
+      "제5일 | 타슈켄트 | 전용차량 | 전일 | 호텔 조식 후 | | 조: | / 호텔식",
+      "제5일 | 타슈켄트 | 전용차량 | 전일 | 침감산으로 이동 | | 중: | 현지식",
+      "제5일 | 타슈켄트 | 전용차량 | 전일 | 중앙아시아의 그랜드캐년 차린 협곡 관광 | | |",
+      "제5일 | 타슈켄트 | 전용차량 | 전일 | 타슈켄트 복귀 | | 석: | 한 식",
+    ].join("\n");
+
+    const result = await parseItineraryWithDiagnostics({
+      rawText,
+      title: "카자흐스탄 분리 식사 컬럼 테스트",
+    });
+    const dayFiveItems = result.itinerary.days.find((day) => day.dayNo === 5)?.items ?? [];
+
+    expect(dayFiveItems.find((item) => item.mealSlot === "breakfast")?.meal?.breakfast).toBe("호텔식");
+    expect(dayFiveItems.find((item) => item.mealSlot === "lunch")?.meal?.lunch).toBe("현지식");
+    expect(dayFiveItems.find((item) => item.mealSlot === "dinner")?.meal?.dinner).toBe("한 식");
+    expect(dayFiveItems.some((item) => item.content.includes("중앙아시아의 그랜드캐년"))).toBe(true);
+    expect(dayFiveItems.some((item) => item.type === "MEAL" && item.content.includes("앙아시아"))).toBe(false);
+    expect(dayFiveItems.some((item) => item.type === "OTHER" && /^[|/]\s*(?:호텔식|현지식|한\s*식)$/u.test(item.content))).toBe(false);
   });
 
   it("prefers deterministic table rows over sparse AI image parse output", async () => {

@@ -687,7 +687,7 @@ function sanitizeMealText(text: string, slot: MealSlot): string {
   const cleaned = cleanText(
     text
       .replace(/\(\s*예정\s*\)|예정|후$/gu, "")
-      .replace(/^[|•·\-:：\s]+|[|•·\-:：\s]+$/gu, "")
+      .replace(/^[|/•·\-:：\s]+|[|/•·\-:：\s]+$/gu, "")
       .replace(/\s{2,}/gu, " ")
   );
   if (!cleaned || cleaned.length <= 1) return mealSlotLabel(slot);
@@ -706,7 +706,7 @@ function parseMealFromToken(
     .replace(/^[·•\-\s|]+/u, "")
     .replace(/^\(\s*(\S+)\s*\)\s*/u, "$1 ");
 
-  const colonMatch = /^([조중석bld]|아침|점심|저녁|breakfast|lunch|dinner)\s*[:：]\s*([^|]+)$/iu.exec(cleaned);
+  const colonMatch = /^([조중석bld]|아침|점심|저녁|breakfast|lunch|dinner)\s*[:：]\s*([^|]*)$/iu.exec(cleaned);
   if (colonMatch) {
     const slot = toMealSlotByToken(colonMatch[1] ?? "");
     if (slot) return { slot, text: sanitizeMealText(colonMatch[2] ?? "", slot) };
@@ -765,6 +765,35 @@ function extractLabeledMealSummary(content: string): Array<{ slot: MealSlot; tex
   return extractCompactMealSummary(withoutLabel);
 }
 
+function extractParenthesizedMealRow(content: string): { slot: MealSlot; text: string } | undefined {
+  const matched = /^\(\s*([조중석])\s*\)\s*(.+)$/u.exec(cleanText(content));
+  if (!matched?.[1] || !matched[2]) return undefined;
+  const slot = toMealSlotByToken(matched[1]);
+  return slot ? { slot, text: sanitizeMealText(matched[2], slot) } : undefined;
+}
+
+function extractLooseKnownMealValue(content: string): string {
+  const cleaned = cleanText(content);
+  const matched = /^[|/]\s*(.+)$/u.exec(cleaned);
+  const value = cleanText(matched?.[1] ?? cleaned);
+  if (!value) return "";
+  return /^(?:호텔식|현지식|한\s*식|한식|불포함|기내식|도시락|자유식|공항식|선상식|밀박스)$/u.test(value)
+    ? value
+    : "";
+}
+
+function applyLooseMealValue(
+  meals: Array<{ slot: MealSlot; text: string }>,
+  value: string,
+): Array<{ slot: MealSlot; text: string }> {
+  let replaced = false;
+  return meals.map((meal) => {
+    if (replaced || !isEmptyMealLabel(meal.text)) return meal;
+    replaced = true;
+    return { ...meal, text: value };
+  });
+}
+
 function extractMealsFromContent(content: string): {
   strippedContent: string;
   meals: Array<{ slot: MealSlot; text: string }>;
@@ -774,6 +803,10 @@ function extractMealsFromContent(content: string): {
   const labeledMealSummary = extractLabeledMealSummary(working);
   if (labeledMealSummary.length > 0) {
     return { strippedContent: "", meals: labeledMealSummary };
+  }
+  const parenthesizedMealRow = extractParenthesizedMealRow(working);
+  if (parenthesizedMealRow) {
+    return { strippedContent: "", meals: [parenthesizedMealRow] };
   }
 
   const segments = working.split("|").map((entry) => cleanText(entry));
@@ -792,6 +825,13 @@ function extractMealsFromContent(content: string): {
       standaloneParsed &&
       standaloneParsed.text === mealSlotLabel(standaloneParsed.slot)
     ) {
+      const nextKnownMealValue = next ? extractLooseKnownMealValue(next) : "";
+      if (nextKnownMealValue) {
+        meals.push({ slot: standaloneParsed.slot, text: nextKnownMealValue });
+        removeSegment(index);
+        removeSegment(index + 1);
+        continue;
+      }
       const segmentRemainder = stripPostMealConnector(
         cleanText(segment.replace(/^(조식|중식|석식|아침|점심|저녁|breakfast|lunch|dinner)\s*/iu, ""))
       );
@@ -949,7 +989,7 @@ function extractCompactMealSummary(content: string): Array<{ slot: MealSlot; tex
   if (!text) return [];
 
   const meals: Array<{ slot: MealSlot; text: string }> = [];
-  const mealPattern = /(?:^|[\s,/|])(?:\(\s*)?(조식|중식|석식|아침|점심|저녁|[조중석])(?:\s*\))?\s*[:：]?\s*([\s\S]*?)(?=(?:[\s,/|]+(?:\(\s*)?(?:조식|중식|석식|아침|점심|저녁|[조중석])(?:\s*\))?\s*[:：]?)|$)/gu;
+  const mealPattern = /(?:^|[\s,/|])(?:\(\s*)?(조식|중식|석식|아침|점심|저녁|[조중석](?![가-힣]))(?:\s*\))?\s*[:：]?\s*([\s\S]*?)(?=(?:[\s,/|]+(?:\(\s*)?(?:조식|중식|석식|아침|점심|저녁|[조중석](?![가-힣]))(?:\s*\))?\s*[:：]?)|$)/gu;
   for (const match of text.matchAll(mealPattern)) {
     const slot = toMealSlotByToken(match[1] ?? "");
     if (!slot) continue;
@@ -1213,7 +1253,7 @@ function isLikelyMealText(value: string): boolean {
 }
 
 function isEmptyMealLabel(value: string): boolean {
-  const normalized = cleanText(value).replace(/[\s•·\-]+/gu, "");
+  const normalized = cleanText(value).replace(/[\s•·\-:：]+/gu, "");
   return normalized === "조식" || normalized === "중식" || normalized === "석식" || normalized === "아침" || normalized === "점심" || normalized === "저녁" || normalized === "조" || normalized === "중" || normalized === "석";
 }
 
@@ -2933,7 +2973,7 @@ function applyRawMealOverrides(
       let items = [...day.items];
       for (const slot of slots) {
         const value = meals[slot];
-        if (!value) continue;
+        if (!value || isEmptyMealLabel(value)) continue;
 
         const existingIndex = items.findIndex((item) => item.type === "MEAL" && item.mealSlot === slot);
         if (existingIndex >= 0) {
@@ -3433,7 +3473,32 @@ function parseFallbackFromRaw(rawText: string, title?: string): ItineraryData {
 
     const { strippedContent: timedContent, meals: timedMeals } = extractMealsFromContent(finalContent);
     finalContent = cleanText(timedContent.replace(/\s*\|\s*$/u, ""));
-    const allMeals = [...contentMeals, ...detailMeals, ...timedMeals];
+    let allMeals = [...contentMeals, ...detailMeals, ...timedMeals];
+    const looseMealValue = extractLooseKnownMealValue(finalContent);
+    if (looseMealValue && allMeals.length > 0) {
+      allMeals = applyLooseMealValue(allMeals, looseMealValue);
+      finalContent = "";
+    }
+    if (looseMealValue && allMeals.length === 0) {
+      const bucket = grouped.get(currentDayNo) ?? [];
+      const mealIndex = bucket.findIndex((item) => {
+        if (item.type !== "MEAL" || !item.mealSlot) return false;
+        return isEmptyMealLabel(item.meal?.[item.mealSlot] ?? item.content);
+      });
+      const existingMeal = mealIndex >= 0 ? bucket[mealIndex] : undefined;
+      if (existingMeal?.type === "MEAL" && existingMeal.mealSlot) {
+        bucket[mealIndex] = {
+          ...existingMeal,
+          content: looseMealValue,
+          meal: {
+            ...(existingMeal.meal ?? {}),
+            [existingMeal.mealSlot]: looseMealValue,
+          },
+        };
+        grouped.set(currentDayNo, bucket);
+        return true;
+      }
+    }
     let duplicateSummary = false;
     if (isLikelyDuplicateDaySummary(finalContent)) {
       finalContent = "";
