@@ -43,6 +43,7 @@ describe("AI prompt builders", () => {
 
     expect(PARSER_SYSTEM_PROMPT).toContain("반드시 JSON 객체만 출력");
     expect(PARSER_SYSTEM_PROMPT).toContain("견적번호/기준코드/출발일/인원/차량/호텔/포함/불포함/비고/지상비");
+    expect(PARSER_SYSTEM_PROMPT).toContain("실제 호텔명이 아닌 행동 문구는 OTHER");
     expect(prompt).toContain("[AI 분석 결과]");
     expect(prompt).not.toContain("[원문]");
     expect(prompt).toContain("10-1) 분석 요약에 day별 HOTEL/호텔명 행이 있으면 해당 day의 ACCOMMODATION item으로 반드시 생성한다.");
@@ -299,12 +300,31 @@ D4 : 국립모스크 / 공항샌딩 / 중-한식 / 석-현지식`;
     const dayTwo = result.itinerary.days.find((day) => day.dayNo === 2);
 
     expect(result.itinerary.days.map((day) => day.dayNo)).toEqual([1, 2, 3, 4]);
-    expect(dayOne?.items.some((item) => item.type === "ACCOMMODATION" && item.content.includes("호텔 투숙"))).toBe(true);
+    expect(dayOne?.items.some((item) => item.type === "OTHER" && item.content.includes("호텔 투숙"))).toBe(true);
     expect(dayOne?.items.find((item) => item.type === "MEAL" && item.mealSlot === "dinner")?.content).toBe("한식");
     expect(dayTwo?.items.find((item) => item.type === "MEAL" && item.mealSlot === "lunch")?.content).toBe("현지식");
     expect(dayTwo?.items.find((item) => item.type === "MEAL" && item.mealSlot === "dinner")?.content).toBe("세미씨푸드");
     expect(result.diagnostics.fieldCoverage?.mealCount).toBeGreaterThanOrEqual(7);
-    expect(result.diagnostics.fieldCoverage?.accommodationCount).toBeGreaterThanOrEqual(1);
+    expect(result.diagnostics.fieldCoverage?.accommodationCount).toBe(0);
+  });
+
+  it("keeps accommodation-labeled schedule prose out of hotel fields", async () => {
+    process.env.OPENAI_API_KEY = "";
+
+    const { parseItineraryWithDiagnostics } = await import("@/lib/itinerary/aiParser");
+    const rawText = [
+      "1일차 | 숙박 | 지역=우전 상해 | 교통편=전용차량 | 시간=전일 | 호텔 & 우전 고요한 산책길 자유시간 상해로 이동(약 2시간 소요) 상해 스타벅스 리저브 로스터리 자유시간 호텔 투숙 및 휴식",
+      "2일차 | 숙박 | HOTEL: 노보텔 상해 또는 동급 | | |",
+    ].join("\n");
+
+    const result = await parseItineraryWithDiagnostics({ rawText, title: "상해 우전 테스트" });
+    const genericHotelAction = result.itinerary.days[0]?.items.find((item) => item.content.includes("우전 고요한 산책길"));
+    const actualHotel = result.itinerary.days[1]?.items.find((item) => item.content.includes("노보텔 상해"));
+
+    expect(genericHotelAction?.type).toBe("OTHER");
+    expect(genericHotelAction?.hotel).toBeUndefined();
+    expect(actualHotel?.type).toBe("ACCOMMODATION");
+    expect(actualHotel?.hotel).toContain("노보텔 상해");
   });
 
   it("parses copied product summaries into overview and basics metadata", async () => {
