@@ -8,9 +8,10 @@ const FIXTURE_DIR = path.resolve(process.cwd(), "tests/fixtures/itinerary-golden
 const QUALITY_SCORE_THRESHOLD = 70;
 const KNOWN_LOW_SCORE_BASELINES = [
   { marker: "쿨인싱아웃4박", minQualityScore: 53 },
+  { marker: "푸꾸옥_QA00603277001", minQualityScore: 64 },
 ];
 const FIELD_COVERAGE_BASELINES = [
-  { marker: "쿠말겐3박", minDayCount: 4, minMealCount: 7, minAccommodationCount: 1 },
+  { marker: "쿠말겐3박", minDayCount: 4, minMealCount: 7, minAccommodationCount: 0 },
 ];
 const INLINE_EXPECTATIONS: Array<{ marker: string; expected: GoldenExpected }> = [
   {

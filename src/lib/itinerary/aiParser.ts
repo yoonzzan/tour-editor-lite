@@ -11,6 +11,10 @@ import { config } from "@/lib/config";
 import { enforceAccommodationLast } from "@/lib/itinerary/policy";
 import { parseItineraryText } from "@/lib/itinerary/importParser";
 import { currentYearInKorea, dateStringInKorea, todayInKorea } from "@/lib/date/korea";
+import {
+  coerceAccommodationType,
+  isGenericHotelActionText,
+} from "@/lib/itinerary/accommodationClassification";
 import { splitMcpScheduleContent, splitStructuredScheduleContent } from "@/lib/itinerary/contentDetail";
 import {
   ANALYSIS_SYSTEM_PROMPT,
@@ -639,7 +643,7 @@ function fallbackType(content: string): ScheduleItemType {
     /(HOTEL\s*-\s*|숙박|리조트|resort|check[-\s]?in|체크[-\s]?인|체크[-\s]?아웃|호텔\s*(?:투숙|휴식)|객실|room|\b\d+\s*박\b)/iu
       .test(content)
   ) {
-    return "ACCOMMODATION";
+    return coerceAccommodationType("ACCOMMODATION", content);
   }
   const hasMeal = /(?:조식|중식|석식|아침|점심|저녁|조[:：]|중[:：]|석[:：]|\b[BLD]\s*[:：]|meal|breakfast|lunch|dinner)/iu.test(content);
   const hasMovement = /(이동|항공|차량|버스|공항|flight|transfer|출발|도착|탑승|출국|출국수속|입국|입국수속|미팅|송영)/u.test(text);
@@ -3138,7 +3142,11 @@ function splitExplicitSimpleSchedule(body: string): {
 }
 
 function simpleActivityType(content: string): ScheduleItemType {
-  if (/(숙박|투숙|리조트|호텔|체크인|체크아웃)/u.test(content)) return "ACCOMMODATION";
+  if (isGenericHotelActionText(content)) return "OTHER";
+  if (/(숙박|투숙|리조트|호텔|체크인|체크아웃)/u.test(content)) {
+    const type = coerceAccommodationType("ACCOMMODATION", content);
+    if (type === "ACCOMMODATION") return type;
+  }
   if (/(도착|출발|이동|공항)/u.test(content)) return "TRANSFER";
   if (/(자유일정|불포함)/u.test(content)) return "OTHER";
   return "SIGHTSEEING";
@@ -3212,7 +3220,7 @@ function directTypedScheduleItem(line: string): ScheduleItem | null {
       : label === "관광"
         ? "SIGHTSEEING"
         : label === "숙박"
-          ? "ACCOMMODATION"
+          ? coerceAccommodationType("ACCOMMODATION", content)
           : "OTHER";
   const split = splitDirectScheduleContent(content);
   return {
@@ -3795,7 +3803,7 @@ function normalizeAiResult(raw: unknown, title?: string): ItineraryData {
             : splitStructuredScheduleContent(contentForSchedule);
           const content = split.content;
           const normalizedItems: ScheduleItem[] = [];
-          const rawType = item.type ?? (content ? fallbackType(content) : "OTHER");
+          const rawType = coerceAccommodationType(item.type ?? (content ? fallbackType(content) : "OTHER"), content);
           const region = isLikelyRegion(item.region ?? "") ? cleanText(item.region) : "";
           const transport = isLikelyTransport(item.transport ?? "") ? cleanText(item.transport) : "";
           const time = extractTimeToken(cleanText(item.time) || content);

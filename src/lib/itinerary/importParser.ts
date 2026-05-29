@@ -8,6 +8,7 @@ import {
   dateStringInKorea,
   todayInKorea,
 } from "@/lib/date/korea";
+import { coerceAccommodationType } from "@/lib/itinerary/accommodationClassification";
 import { splitStructuredScheduleContent } from "@/lib/itinerary/contentDetail";
 
 type UnknownRecord = Record<string, unknown>;
@@ -123,7 +124,7 @@ function normalizeItemType(content: string): ScheduleItemType {
   // 대괄호 안 식당명·식사 추천이 ACCOMMODATION 오분류를 유발하므로 제외
   const forTypeCheck = content.replace(/\[[^\]]*\]/gu, "");
   const lower = forTypeCheck.toLowerCase();
-  if (/(숙박|호텔|리조트)/u.test(forTypeCheck)) return "ACCOMMODATION";
+  if (/(숙박|호텔|리조트)/u.test(forTypeCheck)) return coerceAccommodationType("ACCOMMODATION", forTypeCheck);
   if (/(식사|조식|중식|석식|아침|점심|저녁|식권|다이닝)/u.test(forTypeCheck)) return "MEAL";
   if (/(항공|이동|차량|버스|택시|공항|transfer|flight)/u.test(lower)) return "TRANSFER";
   if (/(골프|관광|투어|체험|탐방|스파|쇼핑)/u.test(forTypeCheck)) return "SIGHTSEEING";
@@ -206,7 +207,7 @@ function splitColumnScheduleItem(value: string): {
 function buildLineItem(content: string, _dayNo: number, _seq: number, detail?: string): ScheduleItem {
   const columnItem = detail ? undefined : splitColumnScheduleItem(content);
   const split = columnItem ? { content: columnItem.content } : detail ? { content, detail } : splitStructuredScheduleContent(content);
-  const itemType = columnItem?.type ?? normalizeItemType(split.content);
+  const itemType = coerceAccommodationType(columnItem?.type ?? normalizeItemType(split.content), split.content);
   const mealSlot = itemType === "MEAL" ? inferMealSlot([split.content, split.detail].filter(Boolean).join(" ")) : undefined;
   const mealContent = mealSlot ? normalizeMealContent(split.content, split.detail, mealSlot) : "";
   return {

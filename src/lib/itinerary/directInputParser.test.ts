@@ -189,8 +189,29 @@ describe("direct input itinerary parser", () => {
     expect(allContents).toContain("롯데전망대");
     expect(meal(itinerary, 2, "lunch")).toBe("옌뜨 정식");
     expect(meal(itinerary, 2, "dinner")).toBe("무제한 삼겹살");
+    const hotelMove = itinerary.days[0]?.items.find((item) => item.content === "호텔 이동 및 휴식");
+    expect(hotelMove?.type).toBe("OTHER");
+    expect(hotelMove?.hotel).toBeUndefined();
     expect(allContents).not.toContain("견적코드");
     expect(allContents).not.toContain("지상비");
+  });
+
+  it("demotes typed generic hotel action rows while keeping actual hotel names", async () => {
+    const rawText = [
+      "1일차 2026-07-08",
+      "- 숙박 | 지역=우전 상해 | 교통편=전용차량 | 시간=전일 | 호텔 & 우전 고요한 산책길 자유시간 상해로 이동 상해 스타벅스 리저브 로스터리 자유시간 호텔 투숙 및 휴식",
+      "- 숙박 | HOTEL: 노보텔 상해 또는 동급",
+    ].join("\n");
+
+    const { itinerary } = await parseDirectInputItineraryWithDiagnostics({ rawText, title: "직접입력 일정" });
+    const genericHotelAction = itinerary.days[0]?.items.find((item) => item.content.includes("우전 고요한 산책길"));
+    const actualHotel = itinerary.days[0]?.items.find((item) =>
+      item.content.includes("노보텔 상해") || item.detail?.includes("노보텔 상해")
+    );
+
+    expect(genericHotelAction?.type).toBe("OTHER");
+    expect(genericHotelAction?.hotel).toBeUndefined();
+    expect(actualHotel?.type).toBe("ACCOMMODATION");
   });
 
   it("splits compact hyphenated simple schedules into meals and activities", async () => {

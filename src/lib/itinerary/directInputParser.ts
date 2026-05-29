@@ -10,6 +10,10 @@ import { currentYearInKorea, todayInKorea } from "@/lib/date/korea";
 import { enforceAccommodationPolicy } from "@/lib/itinerary/policy";
 import { parseItineraryText } from "@/lib/itinerary/importParser";
 import {
+  coerceAccommodationType,
+  isGenericHotelActionText,
+} from "@/lib/itinerary/accommodationClassification";
+import {
   parseItineraryWithDiagnostics,
   type ItineraryFieldCoverage,
   type ItineraryParseResult,
@@ -322,8 +326,11 @@ function scheduleItemType(content: string): ScheduleItemType {
   if (/^호텔\s*휴식$/u.test(text)) {
     return "OTHER";
   }
+  if (isGenericHotelActionText(text)) {
+    return "OTHER";
+  }
   if (/(호텔|숙박|투숙|체크\s*인|체크인|체크아웃|리조트|Hotel|HOTEL)/u.test(content)) {
-    return "ACCOMMODATION";
+    return coerceAccommodationType("ACCOMMODATION", text);
   }
   if (/(관광|방문|거리|공원|궁|성|섬|대학|유니버셜|서커스|마사지|온천|시장|전망대|박물관|호수|성당|바티칸|베니스|꼬모|사파리|지옥|유후인|다자이후|자금성|천단|이화원|고북수진|케이블카|바딘|롯데|사오비치|야시장|혼똔|키스브릿지|바구니배|오행산|바나산|크루즈|미케비치|손짜|낙타|오프로드|바이크|맨발걷기|일몰|별빛|캠프파이어|꼬마열차|썰매|승마|광장|징기스칸릉|체험|감상|관람)/u.test(content)) {
     return "SIGHTSEEING";
@@ -365,7 +372,7 @@ function mapTypedItemType(value: string, content: string): ScheduleItemType {
   const label = cleanText(value);
   if (label === "이동") return "TRANSFER";
   if (label === "식사") return "MEAL";
-  if (label === "숙박") return "ACCOMMODATION";
+  if (label === "숙박") return coerceAccommodationType("ACCOMMODATION", content);
   if (label === "관광") return "SIGHTSEEING";
   return scheduleItemType(content);
 }
@@ -875,6 +882,7 @@ function extractHwpMealsAndContent(value: string): { meals: ParsedMeal[]; conten
 
 function hwpScheduleItemType(content: string, isActualHotel: boolean): ScheduleItemType {
   if (isActualHotel) return "ACCOMMODATION";
+  if (isGenericHotelActionText(content)) return "OTHER";
   if (/(?:호텔|숙박)\s*(?:체크\s*-?\s*인|체크인|투숙|휴식)/u.test(content)) return "OTHER";
   if (/^(?:[▶■])/u.test(content)) return "SIGHTSEEING";
   if (/(토롯코|텐류지|대나무숲|노노미야|도게츠교|호센인|니시키|청수사|니넨자카|산넨자카|후시미|도다이지|사슴공원|수상버스|오사카성|도톤보리)/u.test(content)) {
