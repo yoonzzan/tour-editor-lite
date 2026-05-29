@@ -359,6 +359,40 @@ function includesText(values: string[], expected: string): boolean {
   return values.some((value) => value.includes(expected));
 }
 
+function travelDayCount(period: ItineraryData["overview"]["travelPeriod"]): number | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/u.test(period.start) || !/^\d{4}-\d{2}-\d{2}$/u.test(period.end)) return null;
+  const start = new Date(`${period.start}T00:00:00Z`).getTime();
+  const end = new Date(`${period.end}T00:00:00Z`).getTime();
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return null;
+  return Math.floor((end - start) / 86_400_000) + 1;
+}
+
+function assertNoCommonParseAnomalies(testCaseName: string, itinerary: ItineraryData): void {
+  const labeledMealOthers = itinerary.days.flatMap((day) =>
+    day.items
+      .filter((item) => item.type === "OTHER" && /^(?:\[\s*식사\s*\]|식사\s*[:：|])/u.test(item.content))
+      .map((item) => `${day.dayNo}일차:${item.content}`),
+  );
+  expect(labeledMealOthers, `${testCaseName} labeled meal rows should not remain as OTHER`).toEqual([]);
+
+  const labeledAccommodationTexts = itinerary.days.flatMap((day) =>
+    day.items
+      .filter((item) => item.type === "ACCOMMODATION")
+      .flatMap((item) => [item.content, item.hotel ?? ""])
+      .filter((value) => /^\[\s*(?:숙박|호텔|HOTEL|ACCOMMODATION)\s*\]/iu.test(value))
+      .map((value) => `${day.dayNo}일차:${value}`),
+  );
+  expect(labeledAccommodationTexts, `${testCaseName} accommodation labels should be stripped`).toEqual([]);
+
+  const expectedDayCount = travelDayCount(itinerary.overview.travelPeriod);
+  if (expectedDayCount !== null && itinerary.days.every((day) => /^\d{4}-\d{2}-\d{2}$/u.test(day.date))) {
+    expect(
+      expectedDayCount,
+      `${testCaseName} travelPeriod should not greatly exceed parsed day count`,
+    ).toBeLessThanOrEqual(itinerary.days.length + 2);
+  }
+}
+
 async function parseFixture(testCase: GoldenCase): Promise<{ status: number; payload: ParsePayload }> {
   process.env.OPENAI_API_KEY = "";
   vi.resetModules();
@@ -492,6 +526,7 @@ describe("itinerary golden fixtures", () => {
           .flatMap((item) => [item.content, item.hotel ?? ""]),
       ),
     ].filter((value) => value.trim().length > 0);
+    assertNoCommonParseAnomalies(testCase.name, itinerary);
     const forbiddenContents = expected?.forbiddenContents ?? [];
     for (const pattern of NOISE_PATTERNS) {
       expect(itemTexts.some((value) => pattern.test(value)), testCase.name).toBe(false);
