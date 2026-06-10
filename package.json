@@ -16,6 +16,7 @@
     "test:quote-response": "vitest run src/lib/quote/responseParser.test.ts src/lib/quote/responseTemplate.test.ts src/app/api/quote-response/parse/route.test.ts",
     "test:watch": "vitest",
     "verify:parser": "npm run test:parser && npm run quality && git diff --check",
+    "benchmark:pdf-parser": "vite-node -c vitest.config.ts scripts/benchmark-pdf-parser.ts",
     "quality": "bash scripts/quality-gate.sh"
   },
   "dependencies": {
@@ -43,6 +44,7 @@
     "zustand": "^5.0.0"
   },
   "devDependencies": {
+    "@opendataloader/pdf": "^2.4.7",
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
